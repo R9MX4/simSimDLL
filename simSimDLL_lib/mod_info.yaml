@@ -1,0 +1,4 @@
+supportedContent: ALL # possible options: ALL, EXPANSION1_ID, VANILLA_ID
+minimumSupportedBuild: 600112 # the lowest game version that will load the mod
+version: 0.9.0 # version of your mod, displayed on the mod list. for your and users' info
+APIVersion: 2 # required to specify that the mod is using Harmony 2 and has been upgraded for the mergedown changes
