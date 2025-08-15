@@ -8,6 +8,7 @@ This project contains following parts:
   
   cp.bat          : Combine the above parts together. Please configure %gamedir% to the correct location.
 
+------------------
   
 Compile environment:
 
@@ -15,7 +16,8 @@ Compile environment:
   
   simSimDLL       : VS2022, NET Framework v4.7.2
 
-  
+------------------
+
 Predefine option for compile SimDLLPlus (you cant find them in pch.h):
 
   __DEBUGED__     : Fix bugs like liquid duplication. Actually, for some reasons, you can't disable this option otherwise this mod will crash.
