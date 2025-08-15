@@ -7,12 +7,14 @@ This project contains following parts:
   simSimDLL_lib   : Text part
   
   cp.bat          : Combine the above parts together. Please configure %gamedir% to the correct location.
+
   
 Compile environment:
 
   SimDLLPlus      : VS2022, c++, v143
   
   simSimDLL       : VS2022, NET Framework v4.7.2
+
   
 Predefine option for compile SimDLLPlus (you cant find them in pch.h):
 
