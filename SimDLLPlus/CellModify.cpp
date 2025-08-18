@@ -277,7 +277,12 @@ bool DoStateTransition(SimData* simData, SimEvents* simEvents, int cell, const E
 	if (simData->updatedCells->mass[cell] <= 0.0) return false;
 
 	//Low Temp Transition
+#ifdef __SIMDLL_PLUS__ // Same as DoLoadTimeStateTransition
+    if (simData->updatedCells->mass[cell] > elem->compressedLiquifyMass ||
+        simData->updatedCells->temperature[cell] < (elem->lowTemp - 3.0f) && elem->lowTempTransitionIdx != 0xFFFF) {
+#else
 	if (simData->updatedCells->temperature[cell] < (elem->lowTemp - 3.0f) && elem->lowTempTransitionIdx != 0xFFFF) {
+#endif
 		//Update temperature
 		//simData->updatedCells->temperature[cell] = MAX_F(simData->updatedCells->temperature[cell] + 1.5f, 0);
 		simData->updatedCells->temperature[cell] = CLAMP_F(simData->updatedCells->temperature[cell] + 1.5f, SIM_MAX_TEMPERATURE, 1);
@@ -322,18 +327,24 @@ bool DoStateTransition(SimData* simData, SimEvents* simEvents, int cell, const E
 		}
 		else if (!simData->headless && (simData->cells->properties[cell - simData->width] & 2) == 0) {
 			//Target is Liquid. Bottom cell is Liquid-permeable
+			//Remove mass by spawning falling liquid
 			int innerCell = CELL_S2G(cell, simData->width);
 			if (CELL_AVAILABLE(innerCell, simData) && CELL_VISIABLE(innerCell, simData)
-				&& simData->updatedCells->temperature[cell] >= (gElements[mainTargetIdx].lowTemp - 3.0)
-				&& simData->updatedCells->temperature[cell] <= (gElements[mainTargetIdx].highTemp + 3.0)) 
+#ifdef __SIMDLL_PLUS__
+                && simData->updatedCells->mass[cell] > elem->compressedLiquifyMass
+                || (   simData->updatedCells->temperature[cell] >= gElements[mainTargetIdx].lowTemp  - 3.0f
+                    && simData->updatedCells->temperature[cell] <= gElements[mainTargetIdx].highTemp + 3.0f))
+#else
+                && simData->updatedCells->temperature[cell] >= gElements[mainTargetIdx].lowTemp  - 3.0f
+                && simData->updatedCells->temperature[cell] <= gElements[mainTargetIdx].highTemp + 3.0f)
+#endif
 			{
-				//SpawnFallingLiquidInfo
 				SpawnFallingLiquidInfo spawnFallingLiquidInfo = {
 					.cellIdx      = innerCell, 
-					.elementIdx   = mainTargetIdx ,
-					.diseaseIdx	  = simData->updatedCells->diseaseIdx[cell],
-					.mass         = simData->updatedCells->mass[cell],
-					.temperature  = simData->updatedCells->temperature[cell],
+					.elementIdx   = mainTargetIdx,
+					.diseaseIdx	  = simData->updatedCells->diseaseIdx  [cell],
+					.mass         = simData->updatedCells->mass        [cell],
+					.temperature  = simData->updatedCells->temperature [cell],
 					.diseaseCount = simData->updatedCells->diseaseCount[cell]
 				};
 				simEvents->spawnLiquidInfo.push_back(spawnFallingLiquidInfo);
@@ -351,7 +362,12 @@ bool DoStateTransition(SimData* simData, SimEvents* simEvents, int cell, const E
 	}
 
 	//High Temp Transition
+#ifdef __SIMDLL_PLUS__
+    if (simData->updatedCells->mass[cell] < elem->uncompressedgasifyMass &&
+        simData->updatedCells->temperature[cell] > (elem->highTemp + 3.0f) && elem->highTempTransitionIdx != 0xFFFF) {
+#else
 	if (simData->updatedCells->temperature[cell] > (elem->highTemp + 3.0f) && elem->highTempTransitionIdx != 0xFFFF) {
+#endif
 		//Update temperature
 		//simData->updatedCells->temperature[cell] = MAX_F(simData->updatedCells->temperature[cell] - 1.5f, 0);
 		simData->updatedCells->temperature[cell] = CLAMP_F(simData->updatedCells->temperature[cell] - 1.5f, SIM_MAX_TEMPERATURE, 1);

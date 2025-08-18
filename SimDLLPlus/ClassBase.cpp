@@ -1583,8 +1583,14 @@ void SimBase::UpdateData(SimData* simData)
 		for (int yIdx = region.minimum.y; yIdx < region.maximum.y; yIdx++) {
 			int cell     = simData->width * yIdx + region.minimum.x;
 			int cell_end = simData->width * yIdx + region.maximum.x;
+
 			// Traversal all cells
+#ifdef __SIMDLL_PLUS__
+			if (noffset < 0) std::swap(cell, cell_end);
+			for (; cell != cell_end; cell += noffset) {
+#else
 			for (; cell != cell_end; cell++) {
+#endif
 				// Skip not liquid
 				if ((gElementLiquidData[simData->cells->elementIdx[cell]].state & 3) != 2)
 					continue;

@@ -132,6 +132,8 @@ struct ElementTemperatureData
 	float highTemp;
 	float lowTempTransitionOreMassConversion;
 	float highTempTransitionOreMassConversion;
+	float compressedLiquifyMass; // New Add
+	float uncompressedgasifyMass; // New Add
 };
 struct GasObliteration
 {

@@ -44,7 +44,7 @@ void FindCellbyDepth(std::vector<uint16_t> elemIdx, int width, uint16_t src_x, u
     else {
         cellDic->insert(std::pair<int, short>(cell, remain_depth));
     }
-    if (remain_depth >= 1) {
+    if (remain_depth > 1) {
         FindCellbyDepth(elemIdx, width, src_x, src_y - 1, remain_depth - 1, stop_at_solid, stop_at_liquid, stop_at_gas, cellDic);
         FindCellbyDepth(elemIdx, width, src_x - 1, src_y, remain_depth - 1, stop_at_solid, stop_at_liquid, stop_at_gas, cellDic);
         FindCellbyDepth(elemIdx, width, src_x, src_y + 1, remain_depth - 1, stop_at_solid, stop_at_liquid, stop_at_gas, cellDic);
@@ -74,7 +74,7 @@ void GetReachableCells(SimData* simData, uint16_t x, uint16_t y, int max_depth, 
         cellDic[cell] = max_depth - next->front().depth;
     }
     FindCellbyDepth(simData->updatedCells->elementIdx, simData->width, x, y, max_depth, stop_at_solids, false, false, &cellDic);
-
+    // LOGGER_PRINT2("%s-Pos[%d,%d], radius %d, count %llu\n", __func__, x, y, max_depth, cellDic.size());
 #if 0 // unsorted
     for (const auto& pair : cellDic) {
 #else // sorted

@@ -137,15 +137,25 @@ void CellRead(CellSOA* cells, int cell_idx, BinaryBufferReader* reader, int save
 void DoLoadTimeStateTransition(SimData* simData, const int cell)
 {
 	ElementTemperatureData* data = &gElementTemperatureData[simData->updatedCells->elementIdx[cell]];
-	if (simData->updatedCells->temperature[cell] < (data->lowTemp - 3.0) && data->lowTempTransitionIdx != 0xFFFF) {
+#ifdef __SIMDLL_PLUS__ // Same as DoStateTransition
+	if (simData->updatedCells->mass[cell] > data->compressedLiquifyMass ||
+		simData->updatedCells->temperature[cell] < (data->lowTemp - 3.0f) && data->lowTempTransitionIdx != 0xFFFF) {
+#else
+	if (simData->updatedCells->temperature[cell] < (data->lowTemp - 3.0f) && data->lowTempTransitionIdx != 0xFFFF) {
+#endif
 		simData->updatedCells->temperature[cell] += 1.5;
 		simData->updatedCells->elementIdx [cell] = data->lowTempTransitionIdx;
 	}
-	else if (simData->updatedCells->temperature[cell] > (data->highTemp + 3.0) && data->highTempTransitionIdx != 0xFFFF)
-	{
+#ifdef __SIMDLL_PLUS__
+	else if (simData->updatedCells->mass[cell] < data->uncompressedgasifyMass &&
+		     simData->updatedCells->temperature[cell] > (data->highTemp + 3.0f) && data->highTempTransitionIdx != 0xFFFF) {
+#else
+	else if (simData->updatedCells->temperature[cell] > (data->highTemp + 3.0f) && data->highTempTransitionIdx != 0xFFFF) {
+#endif
 		simData->updatedCells->temperature[cell] -= 1.5;
 		simData->updatedCells->elementIdx [cell] = data->highTempTransitionIdx;
 	}
+
 	ASSERT_TEMP(simData->updatedCells->mass[cell], simData->updatedCells->temperature[cell]);
 }
 
@@ -208,6 +218,23 @@ int CreateElementsTable(BinaryBufferReader* reader)
 		gElementTemperatureData[i].highTemp                            = gElements[i].highTemp;
 		gElementTemperatureData[i].lowTempTransitionOreMassConversion  = gElements[i].lowTempTransitionOreMassConversion;
 		gElementTemperatureData[i].highTempTransitionOreMassConversion = gElements[i].highTempTransitionOreMassConversion;
+
+		// New Add
+		gElementTemperatureData[i].compressedLiquifyMass  = FLT_MAX;
+		gElementTemperatureData[i].uncompressedgasifyMass = -1;
+		if ((gElementTemperatureData[i].state & 3) == 1) {
+			uint16_t lowTransIdx = gElementTemperatureData[i].lowTempTransitionIdx;
+			if (gElementTemperatureData[i].lowTempTransitionIdx != -1 && (gElements[lowTransIdx].state & 3) == 2) {
+				float criticalMass = CLAMP_F(gElements[lowTransIdx].maxMass * 0.8f, gElements[i].molarMass * 200.0f, gElements[i].molarMass * 20.0f);
+				gElementTemperatureData[i].compressedLiquifyMass = criticalMass;
+				if (gElementTemperatureData[lowTransIdx].highTempTransitionIdx == i) {
+					gElementTemperatureData[lowTransIdx].uncompressedgasifyMass = criticalMass * 0.97f;
+					LOGGER_PRINT("Liquify Critical Mass %s<->%s: %.1f, MaxMass %.1f, MolarMass %.1f\n", gElementNames[i].c_str(), gElementNames[lowTransIdx].c_str(), criticalMass, gElements[lowTransIdx].maxMass, gElements[i].molarMass);
+				}
+				else
+					LOGGER_PRINT("Liquify Critical Mass %s->%s: %.1f, MaxMass %.1f, MolarMass %.1f\n", gElementNames[i].c_str(), gElementNames[lowTransIdx].c_str(), criticalMass, gElements[lowTransIdx].maxMass, gElements[i].molarMass);
+			}
+		}
 
 		gElementPostProcessData[i].sublimateIndex       = gElements[i].sublimateIndex;
 		gElementPostProcessData[i].convertIndex         = gElements[i].convertIndex;

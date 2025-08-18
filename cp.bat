@@ -1,6 +1,6 @@
 set	gamedir=H:\SteamLibrary\steamapps\common\OxygenNotIncluded\OxygenNotIncluded_Data\Managed
 set	moddir=%USERPROFILE%\Documents\Klei\OxygenNotIncluded\mods\dev
-set	cppdir=%cd%\SimDLLPlus\x64\Debug
+set	cppdir=%cd%\SimDLLPlus\x64\Release
 set	cspdir=%cd%\simSimDLL\bin\Debug
 
 copy	%gamedir%\Assembly-CSharp.dll				%cd%
