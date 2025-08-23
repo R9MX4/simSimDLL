@@ -221,11 +221,12 @@ int CreateElementsTable(BinaryBufferReader* reader)
 
 		// New Add
 		gElementTemperatureData[i].compressedLiquifyMass  = FLT_MAX;
-		gElementTemperatureData[i].uncompressedgasifyMass = -1;
+		gElementTemperatureData[i].uncompressedgasifyMass = FLT_MAX;
 		if ((gElementTemperatureData[i].state & 3) == 1) {
 			uint16_t lowTransIdx = gElementTemperatureData[i].lowTempTransitionIdx;
 			if (gElementTemperatureData[i].lowTempTransitionIdx != -1 && (gElements[lowTransIdx].state & 3) == 2) {
-				float criticalMass = CLAMP_F(gElements[lowTransIdx].maxMass * 0.8f, gElements[i].molarMass * 200.0f, gElements[i].molarMass * 20.0f);
+				//float criticalMass = CLAMP_F(gElements[lowTransIdx].maxMass * 0.8f, gElements[i].molarMass * 200.0f, gElements[i].molarMass * 20.0f);
+				float criticalMass = MAX_F(gElements[lowTransIdx].maxMass * 1.05f, gElements[i].molarMass * 20.0f); // Make sure uncompressedgasifyMass always bigger than maxmass
 				gElementTemperatureData[i].compressedLiquifyMass = criticalMass;
 				if (gElementTemperatureData[lowTransIdx].highTempTransitionIdx == i) {
 					gElementTemperatureData[lowTransIdx].uncompressedgasifyMass = criticalMass * 0.97f;

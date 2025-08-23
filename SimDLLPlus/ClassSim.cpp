@@ -22,7 +22,7 @@ SimData::SimData(int sim_width, int sim_height, bool radiation_enabled, bool hea
     this->tickCount        = 0;
     this->simEvents       .reset();
     this->debugProperties  = {
-        .buildingTemperatureScale           = 0.001f,
+        .buildingTemperatureScale           = 100.0f, // 0.001f,
         .buildingToBuildingTemperatureScale = 0.001f,
         .biomeTemperatureLerpRate           = 0.001f };
     this->components                     = std::vector<SimComponent*>();

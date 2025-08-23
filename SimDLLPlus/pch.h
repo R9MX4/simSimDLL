@@ -55,7 +55,7 @@ extern float CLAMP_F(float val, float max, float min);
 #define CELL_AVAILABLE(_cell, _simData) (_cell >= 0 && _cell < _simData->numGameCells)
 #define CELL_VISIABLE( _cell, _simData) (_simData->visibleGrid[_cell] || _simData->debugProperties.isDebugEditing)
 #define HANDLE_AVAILABLE(_handle, _version) \
-		((_handle & 0xFFFFFF) < 0x100000 && _version[_handle & 0xFFFFFF] == (_handle >> 24))
+		((_handle & 0xFFFFFF) < 0x100000 && _version[_handle & 0xFFFFFF] == (uint8_t)(_handle >> 24))
 //#define RAND_INT(_seed, _min,_max) (srand(_seed), _seed=rand(), _seed%(_max-_min)+_min)
 //#define RAND_FLOAT_01(_seed)       (srand(_seed), _seed=rand(), _seed/double(RAND_MAX))
 #define RAND_INT(_seed, _min,_max) (_seed=214013 * _seed + 2531011,  _seed%(_max-_min)+_min)

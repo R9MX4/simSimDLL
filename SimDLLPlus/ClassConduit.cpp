@@ -54,6 +54,7 @@ T* CompactedVector<T>::GetData(int handle)
 {
 	if (!HANDLE_AVAILABLE(handle, this->handles.versions)) {
 		ASSERT_TEXT("Illegal Handle or Version");
+		LOGGER_PRINT("Handle %d, Version %d\n", handle, this->handles.versions[handle & 0xFFFFFF]);
 	}
 	return &this->data[this->handles.items[handle & 0xFFFFFF]];
 }
@@ -123,11 +124,12 @@ void ConduitTemperatureManager::Set(int handle, float contents_temperature, floa
 	}
 	else {
 		ASSERT_TEXT("Illegal Handle or Version");
+		LOGGER_PRINT("Handle %d, Version %d\n", handle, this->data.handles.versions[handle & 0xFFFFFF]);
 	}
 
 	mtx_unlock(&this->dataMutex);
 
-	LOGGER_PRINT("ConduitTemperatureManager::%s done.\n", __func__);
+	//LOGGER_PRINT("ConduitTemperatureManager::%s done.\n", __func__);
 }
 
 ConduitTemperatureUpdateData* ConduitTemperatureManager::Update(float dt, BuildingTemperatureInfo* building_temperature_info)
@@ -147,41 +149,42 @@ ConduitTemperatureUpdateData* ConduitTemperatureManager::Update(float dt, Buildi
 			if (conduitHandle >= 0x100000)
 				continue;
 
-			float temperature = building_temperature_info[conduitHandle].temperature;
-			if (conduitData.heatCapacity <= 0.0001 || conduitData.conduitHeatCapacity <= 0.0001 || temperature <= 0.0) {
+			float temperaturePipe = building_temperature_info[conduitHandle].temperature;
+			if (conduitData.heatCapacity <= 0.0001 || conduitData.conduitHeatCapacity <= 0.0001 || temperaturePipe <= 0.0) {
 				this->temperatures[handleVal] = conduitData.temperature;
 				continue;
 			}
 			ASSERT_TEMP(1, conduitData.temperature);
-			ASSERT_TEMP(1, temperature);
+			ASSERT_TEMP(1, temperaturePipe);
 
 			float TC;
 			if (conduitData.conduitInsulated)
 				TC = MIN_F(conduitData.thermalConductivity, conduitData.conduitThermalConductivity);
 			else
 				TC = 0.5f * (conduitData.thermalConductivity + conduitData.conduitThermalConductivity);
-			float heatTrans   = (conduitData.temperature - temperature) * TC * 50 * dt * gSimData->debugProperties.buildingTemperatureScale; // 0.001
-			float tempMax     = MAX_F(conduitData.temperature, temperature);
-			float tempMin     = MIN_F(conduitData.temperature, temperature);
+			float heatTrans   = (conduitData.temperature - temperaturePipe) * TC * 50 * dt * gSimData->debugProperties.buildingToBuildingTemperatureScale; // 0.001
+			float tempMax     = MAX_F(conduitData.temperature, temperaturePipe);
+			float tempMin     = MIN_F(conduitData.temperature, temperaturePipe);
 			float tempDeltaCT = CLAMP_F(conduitData.temperature - heatTrans / conduitData.heatCapacity,        tempMax, tempMin) - conduitData.temperature;
-			float tempDeltaCD = CLAMP_F(temperature             + heatTrans / conduitData.conduitHeatCapacity, tempMax, tempMin) - temperature;
-			heatTrans         = MIN_F(fabsf(tempDeltaCT) * conduitData.heatCapacity, fabsf(tempDeltaCD) * conduitData.conduitHeatCapacity);
-			if (conduitData.temperature < temperature)
+			float tempDeltaPi = CLAMP_F(temperaturePipe             + heatTrans / conduitData.conduitHeatCapacity, tempMax, tempMin) - temperaturePipe;
+			heatTrans         = MIN_F(fabsf(tempDeltaCT) * conduitData.heatCapacity, fabsf(tempDeltaPi) * conduitData.conduitHeatCapacity);
+			if (conduitData.temperature < temperaturePipe)
 				heatTrans = -heatTrans;
 
 			float tempFinCT = CLAMP_F(conduitData.temperature - heatTrans / conduitData.heatCapacity       , SIM_MAX_TEMPERATURE, 0);
-			float tempFinCD = CLAMP_F(temperature             + heatTrans / conduitData.conduitHeatCapacity, SIM_MAX_TEMPERATURE, 0);
-			if ((tempFinCT - tempFinCD) * (conduitData.temperature - temperature) < 0) {
-				tempFinCT = (conduitData.heatCapacity * conduitData.temperature + conduitData.conduitHeatCapacity * temperature) / (conduitData.heatCapacity + conduitData.conduitHeatCapacity);
+			float tempFinPi = CLAMP_F(temperaturePipe             + heatTrans / conduitData.conduitHeatCapacity, SIM_MAX_TEMPERATURE, 0);
+			if ((tempFinCT - tempFinPi) * (conduitData.temperature - temperaturePipe) < 0) {
+				tempFinCT = (conduitData.heatCapacity * conduitData.temperature + conduitData.conduitHeatCapacity * temperaturePipe) / (conduitData.heatCapacity + conduitData.conduitHeatCapacity);
 			}
 
 			ASSERT_TEMP(1, tempFinCT);
 			// ASSERT_TEMP(1, tempFinCD);
 			this->temperatures[handleVal] = tempFinCT;
+			conduitData.temperature       = tempFinCT;
 
-			if (fabsf(heatTrans > 1e-6)) {
+			if (fabsf(heatTrans) > 1e-6) {
 				ModifyBuildingEnergyMessage msg = {
-					.handle         = conduitData.conduitBuildingTemperatureHandle,
+					.handle         =  conduitData.conduitBuildingTemperatureHandle,
 					.deltaKJ        = (conduitData.temperature - tempFinCT) * conduitData.heatCapacity,
 					.minTemperature = tempMin,
 					.maxTemperature = tempMax };
