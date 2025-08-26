@@ -21,6 +21,9 @@ Compile environment:
 Predefine option for compile SimDLLPlus (you cant find them in pch.h):
 
   __DEBUGED__        : Fix bugs like liquid duplication. Actually, for some reasons, this option must be enabled otherwise this mod will crash.
+  
   __DEBUG_PRINT__    : Enable/Disable generate log.
+  
   __SIMDLL_PLUS__    : Enable/Disable features metioned above.
+  
   __THREAD_DECOUPLE__: Remove ParallelTaskQueue to avoid performance overhead caused by thread switching
