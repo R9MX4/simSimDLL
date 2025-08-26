@@ -119,6 +119,7 @@ struct CreateElementsTableMessage
 	Element* elements;
 };
 
+#ifndef __THREAD_DECOUPLE__
 struct Task
 {
 	virtual ~Task() {};
@@ -143,6 +144,7 @@ struct UpdateCellSOATask : UpdateCellTask<CellSOA>
 {
 	void InternalDoTask();
 };
+#endif
 
 //----- define Main struct and class -----
 struct NewGameFrame
@@ -220,6 +222,7 @@ public:
 	float ProcessNextFrame(SimData* simData);
 };
 
+#ifndef __THREAD_DECOUPLE__
 struct SimUpdateTask : Task
 {
 	SimData*     simData;
@@ -247,6 +250,7 @@ struct ParallelTaskQueue
 	~ParallelTaskQueue();
 	void WorkerFunc();
 };
+#endif
 
 class SimBase
 {
@@ -260,11 +264,13 @@ class SimBase
 	};
 
 	//SimBase_vtbl* __vftable /*VFT*/;
+#ifndef __THREAD_DECOUPLE__
 	ParallelTaskQueue* taskQueue;
 	std::vector<SimUpdateTask*> temperatureTasks;
 	std::vector<SimEvents*>     simEvents;
 	std::vector<UpdateCellTask<Vector4<float>>*> copyFlowTasks;
 	std::vector<UpdateCellSOATask*>              copyToGameTasks;
+#endif
 
 public:
 	SimFrameManager simFrameManager;
@@ -274,8 +280,10 @@ public:
 	~SimBase();
 	// void DestroyTasks();
 	void UpdateData(SimData* simData);
+#ifndef __THREAD_DECOUPLE__
 	void InitializeUpdateTasks();
 	void ConsolidateEvents(SimData* simData);
+#endif
 	void CopyUpdatedCellsToCells(SimData* simData);
 	void CopySimDataToGame(SimData* simData, GameData* new_game_data, const GameData* old_game_data, int num_frames_processed);
 };

@@ -1231,7 +1231,7 @@ Handle DiseaseEmitter::Register(SimData* simData, AddDiseaseEmitterMessage* msg)
         .elapsedTime  = 0
     };
 
-    return this->AddData(&new_data);;
+    return this->AddData(&new_data);
 }
 
 void DiseaseEmitter::Unregister(int handle)

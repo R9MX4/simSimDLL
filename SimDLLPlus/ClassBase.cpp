@@ -4,6 +4,12 @@
 //----- (Variable) ---------------------------------------------------
 int noffset    = -1;
 int tick_count = 0;
+const static Vector3<float> adjacentOffsets[25] = {
+	{-2, -2, 0.1f }, {-1, -2, 0.15f}, {0, -2, 0.25f}, {1, -2, 0.15f}, {2, -2, 0.1f },
+	{-2, -1, 0.15f}, {-1, -1, 0.5f }, {0, -1, 0.75f}, {1, -1, 0.5f }, {2, -1, 0.15f},
+	{-2,  0, 0.25f}, {-1,  0, 0.75f}, {0,  0, 1    }, {1,  0, 0.75f}, {2,  0, 0.25f},
+	{-2,  1, 0.15f}, {-1,  1, 0.5f }, {0,  1, 0.75f}, {1,  1, 0.5f }, {2,  1, 0.15f},
+	{-2,  2, 0.1f }, {-1,  2, 0.15f}, {0,  2, 0.25f}, {1,  2, 0.15f}, {2,  2, 0.1f } };
 
 //----- (Decompiled Basic) -------------------------------------------
 void UpdateFlowTexture(const SimData* simData, GameData* new_game_data)
@@ -768,8 +774,11 @@ void ProcessBuildingHeatExchangeMessages(SimFrameInfo* frame, SimData* simData)
 	frame->buildingHeatExchangeMessages.modifies.clear();
 
 	for (ModifyBuildingEnergyMessage msg : frame->modifyBuildingEnergyMessages) {
-		if (HANDLE_AVAILABLE(msg.handle, simData->buildingHeatExchange.handles.versions))
+		if (!HANDLE_AVAILABLE(msg.handle, simData->buildingHeatExchange.handles.versions)) {
+			ASSERT_TEXT("Illegal Handle or Version");
 			continue;
+		}
+
 		int handleItm = simData->buildingHeatExchange.handles.items[msg.handle & 0xFFFFFF];
 		BuildingHeatExchangeData* data = &simData->buildingHeatExchange.data[handleItm];
 		float tempMin = MIN_F(msg.minTemperature, data->temperature);
@@ -1032,6 +1041,7 @@ void CombineDiseaseConsumerMessages(SimFrameInfo* frame, SimData* simData)
 }
 
 //----- (Decompiled Main) --------------------------------------------
+#ifndef __THREAD_DECOUPLE__
 ParallelTaskQueue::ParallelTaskQueue(uint64_t threadCount)
 {
 	cnd_init(&this->mWorkCompleteCondition);
@@ -1096,6 +1106,7 @@ void ParallelTaskQueue::WorkerFunc()
 		LOGGER_PRINT2("%s done task. mTaskCount %lld/%lld\n", __func__, this->mTaskCount, this->mTasks.size());
 	}
 }
+#endif
 
 SimFrameManager::SimFrameManager() 
 {
@@ -1392,21 +1403,24 @@ float SimFrameManager::ProcessNextFrame(SimData* simData)
 SimBase::SimBase() 
 {
 	//this->simFrameManager  = SimFrameManager();
+	this->elapsedSeconds = 0;
 
+#ifndef __THREAD_DECOUPLE__
 	this->taskQueue        = new ParallelTaskQueue(1);
 	this->temperatureTasks = std::vector<SimUpdateTask*>();
 	this->simEvents        = std::vector<SimEvents*>();
 	this->copyFlowTasks    = std::vector<UpdateCellTask<Vector4<float>>*>();
 	this->copyToGameTasks  = std::vector<UpdateCellSOATask*>();
-	this->elapsedSeconds   = 0;
 
 	this->copyFlowTasks.push_back(new UpdateCellTask<Vector4<float>>());
 	this->copyToGameTasks.push_back(new UpdateCellSOATask());
 	this->InitializeUpdateTasks();
+#endif
 }
 
 SimBase::~SimBase()
 {
+#ifndef __THREAD_DECOUPLE__
 	// this->DestroyTasks();
 	if (this->taskQueue) {
 		this->taskQueue->~ParallelTaskQueue();
@@ -1417,6 +1431,7 @@ SimBase::~SimBase()
 	for (auto& task : this->copyToGameTasks)  delete(task);
 	for (auto& task : this->copyFlowTasks)    delete(task);
 	for (auto& task : this->simEvents)        delete(task);
+#endif
 }
 
 void SimBase::UpdateData(SimData* simData)
@@ -1432,6 +1447,51 @@ void SimBase::UpdateData(SimData* simData)
 		LOGGER_PRINT2("\t%s: [%d-%d]x[%d-%d]\n", __func__, activeRegion.region.minimum.x, activeRegion.region.maximum.x, activeRegion.region.minimum.y, activeRegion.region.maximum.y);
 
 		Region region = activeRegion.region;
+
+#ifdef __THREAD_DECOUPLE__
+		for (int locY = region.minimum.y; locY < region.maximum.y; locY++) {
+			for (int locX = region.minimum.x; locX < region.maximum.x; locX++) {
+				int      cell = locX + simData->width * locY;
+				uint16_t elem = simData->cells->elementIdx[cell];
+				if (simData->cells->mass[cell] >= 0.001f) {
+					int      cellR = cell + 1;
+					int      cellT = cell + simData->width;
+					uint16_t elemR = simData->cells->elementIdx[cellR];
+					uint16_t elemT = simData->cells->elementIdx[cellT];
+					if (locX < region.maximum.x - 1
+						&& fabsf(simData->cells->temperature[cell] - simData->cells->temperature[cellR]) >= 1
+						&& simData->cells->mass[cellR] >= 0.001f
+						&& gElementTemperatureData[elem].thermalConductivity > 0
+						&& gElementTemperatureData[elemR].thermalConductivity > 0
+						&& !(gElementTemperatureData[elem].state & 0x10)
+						&& !(gElementTemperatureData[elemR].state & 0x10))
+					{
+						UpdateTemperature(simData, simData->simEvents.get(), cell, cellR);
+					}
+					if (locY < region.maximum.y - 1
+						&& fabsf(simData->cells->temperature[cell] - simData->cells->temperature[cellT]) >= 1
+						&& simData->cells->mass[cellT] >= 0.001f
+						&& gElementTemperatureData[elem].thermalConductivity > 0
+						&& gElementTemperatureData[elemT].thermalConductivity > 0
+						&& !(gElementTemperatureData[elem].state & 0x10)
+						&& !(gElementTemperatureData[elemT].state & 0x10))
+					{
+						UpdateTemperature(simData, simData->simEvents.get(), cell, cellT);
+					}
+				}
+				// Not TemperatureInsulated
+				if (!(gElementTemperatureData[elem].state & 0x10)) {
+					float biomeTemp = simData->biomeTemperature[cell];
+					if (biomeTemp >= 0) {
+						// biomeTemperatureLerpRate = 0.001
+						simData->updatedCells->temperature[cell] +=
+							(biomeTemp - simData->updatedCells->temperature[cell]) * simData->debugProperties.biomeTemperatureLerpRate;
+						DoStateTransition(simData, simData->simEvents.get(), cell, &gElementTemperatureData[elem]);
+					}
+				}
+			}
+		}
+#else
 		int yExtra = (region.maximum.y - region.minimum.y) % (int)this->taskQueue->mWorkers.size();
 		int yInner = (region.maximum.y - region.minimum.y) / (int)this->taskQueue->mWorkers.size();
 
@@ -1458,6 +1518,7 @@ void SimBase::UpdateData(SimData* simData)
 			if (cnd_wait(&this->taskQueue->mWorkCompleteCondition, &this->taskQueue->mMutex))
 				throw (&this->taskQueue->mMutex);
 		mtx_unlock(&this->taskQueue->mMutex);
+#endif
 		LOGGER_PRINT2("\t%s: TemperatureTasks Done\n", __func__);
 
 		region = activeRegion.region;
@@ -1578,7 +1639,9 @@ void SimBase::UpdateData(SimData* simData)
 		LOGGER_PRINT2("\t%s: Gas Replacement Done. [%d-%d]x[%d-%d]\n", __func__, x_start, x_end, y_start, y_end);
 
 		simData->cells->CopyFrom(simData->updatedCells.get());
+#ifndef __THREAD_DECOUPLE__
 		this->ConsolidateEvents(simData);
+#endif
 		// Process Liquid Movement (not replace element)
 		for (int yIdx = region.minimum.y; yIdx < region.maximum.y; yIdx++) {
 			int cell     = simData->width * yIdx + region.minimum.x;
@@ -1707,12 +1770,6 @@ void SimBase::UpdateData(SimData* simData)
 			}
 			LOGGER_PRINT2("\t%s: Update Cosmic Radiation Done\n", __func__);
 
-			Vector3<float> adjacentOffsets[25] = {
-				{-2, -2, 0.1f }, {-1, -2, 0.15f}, {0, -2, 0.25f}, {1, -2, 0.15f}, {2, -2, 0.1f },
-				{-2, -1, 0.15f}, {-1, -1, 0.5f }, {0, -1, 0.75f}, {1, -1, 0.5f }, {2, -1, 0.15f},
-				{-2,  0, 0.25f}, {-1,  0, 0.75f}, {0,  0, 1    }, {1,  0, 0.75f}, {2,  0, 0.25f},
-				{-2,  1, 0.15f}, {-1,  1, 0.5f }, {0,  1, 0.75f}, {1,  1, 0.5f }, {2,  1, 0.15f},
-				{-2,  2, 0.1f }, {-1,  2, 0.15f}, {0,  2, 0.25f}, {1,  2, 0.15f}, {2,  2, 0.1f } };
 			for (int yIdx = region.minimum.y; yIdx < region.maximum.y; yIdx++) {
 				//LOGGER_PRINT2("\t%s: yIdx %d/%d\n", __func__, yIdx, region.maximum.y);
 				for (int xIdx = region.minimum.x; xIdx < region.maximum.x; xIdx++) {
@@ -1809,6 +1866,7 @@ void SimBase::UpdateData(SimData* simData)
 	LOGGER_PRINT2("%s done, tick %d\n", __func__, simData->tickCount);
 }
 
+#ifndef __THREAD_DECOUPLE__
 void SimBase::InitializeUpdateTasks()
 {
 	for (int i = 0; i < this->taskQueue->mWorkers.size(); i++) {
@@ -1842,6 +1900,7 @@ void SimBase::ConsolidateEvents(SimData* simData)
 		p_simEvent->digInfo.clear();
 	}
 }
+#endif
 
 void SimBase::CopyUpdatedCellsToCells(SimData* simData)
 {
@@ -1851,8 +1910,35 @@ void SimBase::CopyUpdatedCellsToCells(SimData* simData)
 void SimBase::CopySimDataToGame(SimData* simData, GameData* new_game_data, const GameData* old_game_data, int num_frames_processed)
 {
 	LOGGER_PRINT2("%s. Processed frame:%d\n", __func__, num_frames_processed);
+
+#ifdef __THREAD_DECOUPLE__
+	CellSOA*        srcCell  = simData->updatedCells.get();
+	CellSOA*        destCell = new_game_data->cells .get();
+	Vector4<float>* srcFlow  = simData->flow        .get();
+	Vector4<float>* destFlow = new_game_data->flow  .get();
+
+	LOGGER_PRINT2("%s copyToGameTasks %lld->%lld.\n", __func__, (uint64_t)srcCell, (uint64_t)destCell);
+	LOGGER_PRINT2("%s copyFlowTasks   %lld->%lld.\n", __func__, (uint64_t)srcFlow, (uint64_t)destFlow);
+	for (int yIdx = 0; yIdx < new_game_data->height; yIdx++) {
+		uint64_t cell_src  = (yIdx + 1) * simData->width + 1;
+		uint64_t cell_dest =  yIdx      * new_game_data->width;
+
+		memmove(&destFlow				[cell_dest], &srcFlow				[cell_src], new_game_data->width * sizeof(Vector4<float>));
+		memmove(&destCell->elementIdx	[cell_dest], &srcCell->elementIdx	[cell_src], new_game_data->width * 2);
+		memmove(&destCell->temperature	[cell_dest], &srcCell->temperature	[cell_src], new_game_data->width * 4);
+		memmove(&destCell->mass			[cell_dest], &srcCell->mass			[cell_src], new_game_data->width * 4);
+		memmove(&destCell->properties	[cell_dest], &srcCell->properties	[cell_src], new_game_data->width);
+		memmove(&destCell->insulation	[cell_dest], &srcCell->insulation	[cell_src], new_game_data->width);
+		memmove(&destCell->strengthInfo	[cell_dest], &srcCell->strengthInfo	[cell_src], new_game_data->width);
+		memmove(&destCell->diseaseIdx	[cell_dest], &srcCell->diseaseIdx	[cell_src], new_game_data->width);
+		memmove(&destCell->diseaseCount	[cell_dest], &srcCell->diseaseCount	[cell_src], new_game_data->width * 4);
+		memmove(&destCell->radiation	[cell_dest], &srcCell->radiation	[cell_src], new_game_data->width * 4);
+	}
+	LOGGER_PRINT2("%s copyTasks done.\n", __func__);
+#else
 	int ySpace     = new_game_data->height / (int)this->copyFlowTasks.size();
 	int yExtra     = new_game_data->height % this->copyFlowTasks.size();
+
 	int srcYStart  = 1;
 	int destYStart = 0;
 	for (int i = 0; i < this->copyFlowTasks.size();i++) {
@@ -1908,6 +1994,7 @@ void SimBase::CopySimDataToGame(SimData* simData, GameData* new_game_data, const
 		if (cnd_wait(&this->taskQueue->mWorkCompleteCondition, &this->taskQueue->mMutex))
 			throw (&this->taskQueue->mMutex);
 	mtx_unlock(&this->taskQueue->mMutex);
+#endif
 
 	new_game_data->elementChunkInfo.resize(simData->elementChunk.chunkInfo.size());
 	new_game_data->elementChunkInfo.assign(simData->elementChunk.chunkInfo.begin(), simData->elementChunk.chunkInfo.end());
@@ -2171,6 +2258,7 @@ void FrameSync::SimSync()
 }
 
 //----- (InternalDoTask) ---------------------------------------------
+#ifndef __THREAD_DECOUPLE__
 void SimUpdateTemperatureTask::InternalDoTask()
 {
 	LOGGER_PRINT2("SimUpdateTemperatureTask %s: [%d-%d]x[%d-%d]\n", __func__, this->start.x, this->end.x, this->start.y, this->end.y);
@@ -2260,3 +2348,4 @@ void UpdateCellTask<T>::InternalDoTask()
 	}
 	LOGGER_PRINT2("UpdateCellTask %s done\n", __func__);
 }
+#endif

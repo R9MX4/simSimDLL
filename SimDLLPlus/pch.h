@@ -7,6 +7,8 @@
 //#undef __DEBUG_PRINT__
 #define __SIMDLL_PLUS__
 //#undef __SIMDLL_PLUS__
+#define __THREAD_DECOUPLE__
+//#undef __THREAD_DECOUPLE__
 
 #include <vector>
 #include <string>

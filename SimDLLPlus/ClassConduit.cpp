@@ -166,7 +166,7 @@ ConduitTemperatureUpdateData* ConduitTemperatureManager::Update(float dt, Buildi
 			float tempMax     = MAX_F(conduitData.temperature, temperaturePipe);
 			float tempMin     = MIN_F(conduitData.temperature, temperaturePipe);
 			float tempDeltaCT = CLAMP_F(conduitData.temperature - heatTrans / conduitData.heatCapacity,        tempMax, tempMin) - conduitData.temperature;
-			float tempDeltaPi = CLAMP_F(temperaturePipe             + heatTrans / conduitData.conduitHeatCapacity, tempMax, tempMin) - temperaturePipe;
+			float tempDeltaPi = CLAMP_F(temperaturePipe         + heatTrans / conduitData.conduitHeatCapacity, tempMax, tempMin) - temperaturePipe;
 			heatTrans         = MIN_F(fabsf(tempDeltaCT) * conduitData.heatCapacity, fabsf(tempDeltaPi) * conduitData.conduitHeatCapacity);
 			if (conduitData.temperature < temperaturePipe)
 				heatTrans = -heatTrans;
@@ -179,8 +179,6 @@ ConduitTemperatureUpdateData* ConduitTemperatureManager::Update(float dt, Buildi
 
 			ASSERT_TEMP(1, tempFinCT);
 			// ASSERT_TEMP(1, tempFinCD);
-			this->temperatures[handleVal] = tempFinCT;
-			conduitData.temperature       = tempFinCT;
 
 			if (fabsf(heatTrans) > 1e-6) {
 				ModifyBuildingEnergyMessage msg = {
@@ -190,6 +188,8 @@ ConduitTemperatureUpdateData* ConduitTemperatureManager::Update(float dt, Buildi
 					.maxTemperature = tempMax };
 				gSim->simFrameManager.HandleMessage(Hashes::ModifyBuildingEnergy, 16, (char*)&msg);
 			}
+			this->temperatures[handleVal] = tempFinCT;
+			conduitData.temperature       = tempFinCT;
 
 			if (tempFinCT < conduitData.lowStateTransitionTemperature - 3)
 				this->frozenContentHandles.push_back(handleVal);

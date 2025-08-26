@@ -163,7 +163,7 @@ void Disease::AddDiseaseToCell(CellSOA* cells, int cell_idx, uint8_t new_disease
 
     cells->diseaseCount[cell_idx] = fin_disease_count;
     cells->diseaseIdx  [cell_idx] = fin_disease_idx;
-    if (org_disease_count <= 0) {
+    if (fin_disease_count <= 0) {
         cells->diseaseIdx                   [cell_idx] = -1;
         cells->diseaseCount                 [cell_idx] = 0;
         cells->diseaseInfestationTickCount  [cell_idx] = 0;
