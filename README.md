@@ -27,3 +27,5 @@ __DEBUG_PRINT__    : Enable/Disable generate log.
 __SIMDLL_PLUS__    : Enable/Disable features metioned above.
   
 __THREAD_DECOUPLE__: Remove ParallelTaskQueue to avoid performance overhead caused by thread switching
+
+__PARALLEL__       : Multi-threading/Single-threading
