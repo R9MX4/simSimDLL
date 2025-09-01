@@ -24,6 +24,7 @@ void CellSOA::CopyFrom(const CellSOA* src)
 #define CopyVector(_Key, _Type) \
 	this->_Key = std::vector<_Type>(src->_Key.size()); \
 	std::copy(src->_Key.begin(), src->_Key.end(), this->_Key.begin());
+	// memcpy(this->_Key.data(), src->_Key.data(), sizeof(_Type) * src->_Key.size());
 
 	//LOGGER_PRINT2("CellSOA %s: %lld->%lld\n", __func__, (uint64_t)src, (uint64_t)this);
 

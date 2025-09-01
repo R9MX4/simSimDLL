@@ -178,8 +178,11 @@ void DoDisplacement(SimData* simData, SimEvents* simEvents, CellSOA* cells, int 
 
 bool DisplaceGas(SimData* simData, SimEvents* simEvents, CellSOA* cells, int cell_idx, uint16_t elem_idx)
 {
-    if (cells->mass[cell_idx] <= 0.0)
-        return false;
+#ifdef __DEBUGED__
+    if (cells->mass[cell_idx] <= 0.0) return !(cells->properties[cell_idx] & 1);
+#else
+    if (cells->mass[cell_idx] <= 0.0) return false;
+#endif
     if ((gElementPostProcessData[cells->elementIdx[cell_idx]].state & 3) != 1)
         return false;
 
@@ -195,12 +198,15 @@ bool DisplaceGas(SimData* simData, SimEvents* simEvents, CellSOA* cells, int cel
         }
     }
 
-    int neighbor_cells[2] = { cell_idx - 1, cell_idx + 1 };
+    int neighbor_cells     [2] = { cell_idx         - 1, cell_idx         + 1 };
     int diagonal_candidates[2] = { cell_idx + width - 1, cell_idx + width + 1 };
     for (int direct = 0; direct < 2; direct++) {
         int dest_cell_idx = diagonal_candidates[(direct + tickCount) & 1];
-
+#ifdef __DEBUGED__
+        if (cells->elementIdx[dest_cell_idx] == elem_idx || cells->elementIdx[dest_cell_idx] == simData->vacuumElementIdx) {
+#else
         if (cells->elementIdx[dest_cell_idx] == elem_idx) {
+#endif
             int neighbor_cell_idx = neighbor_cells[(direct + tickCount) & 1];
             uint16_t elem_n = simData->updatedCells->elementIdx[neighbor_cell_idx];
 
@@ -266,7 +272,11 @@ bool DisplaceLiquid(SimData* simData, SimEvents* simEvents, CellSOA* cells, int 
 
     for (int direct = 0; direct < 4; direct++) {
         int cell = candidate_cells[(direct + simData->tickCount) & 3];
+#ifdef __DEBUGED__
+        if (GET_STATE(cells, cell) == 1 && !(simData->updatedCells->properties[cell] & 2) && DisplaceGas(simData, simEvents, cells, cell, cells->elementIdx[cell]))
+#else
         if (GET_STATE(cells, cell) == 1 && DisplaceGas(simData, simEvents, cells, cell, cells->elementIdx[cell]))
+#endif
             return DisplaceLiquidSimple(simData, simEvents, cell_idx, elem_idx, 4, candidate_cells);
     }
     return false;
@@ -431,7 +441,7 @@ bool DisplaceLiquidDirectional(SimData* simData, SimEvents* simEvents, int src_c
         }
         else if ((state <= 1) && DisplaceGas(simData, simEvents, simData->updatedCells.get(), dest_cell_idx, elem_d)) {
             if (simData->updatedCells->mass[dest_cell_idx] != 0.0)
-                printf("dest_cell.mass() == 0.0f. File:%s Func:%s Line:%d\n", __FILE__, __func__, __LINE__);
+                ASSERT_TEXT("dest_cell.mass() == 0.0f");
             simData->updatedCells->SwapCells(src_cell_idx, dest_cell_idx);
             simEvents->ChangeSubstance(simData, src_cell_idx);
             simEvents->ChangeSubstance(simData, dest_cell_idx);
@@ -454,8 +464,14 @@ bool DoSublimation(SimData* simData, SimEvents* simEvents, int cell_idx, const E
             continue;
         if (data->sublimateIndex == 0xFFFF) // Not sublimatable
             continue;
+#ifdef __PARALLEL__
+        int thrIdx = omp_get_thread_num();
+        if (RAND_FLOAT_01(simData->randomSeedT[thrIdx]) > data->sublimateProbability) // Probability
+            continue;
+#else
         if (RAND_FLOAT_01(simData->randomSeed) > data->sublimateProbability) // Probability
             continue;
+#endif
 
         float mass    = simData->updatedCells->mass[celln];
         float massSrc = MIN_F(data->sublimateRate * 0.2f, mass);
@@ -546,7 +562,12 @@ bool DoDensityDisplacement(SimData* simData, SimEvents* simEvents, const int cel
     return false;
 #else
     if (elem->state == elemDown->state) {
+#ifdef __PARALLEL__
+        int thrIdx = omp_get_thread_num();
+        if (RAND_FLOAT_01(simData->randomSeedT[thrIdx]) > required_probability) {
+#else
         if (RAND_FLOAT_01(simData->randomSeed) > required_probability) {
+#endif
             // Do density replacement
             if (elem->molarMass > elemDown->molarMass) {
                 simData->updatedCells->SwapCells(cell_idx, cellDown);
@@ -950,46 +971,59 @@ bool IsSolid(const CellSOA* cells, uint64_t cell_idx)
 }
 
 //----- (Decompiled Main) --------------------------------------------
-float DoGasPressureDisplacement(uint16_t elem_idx, const int cell, const int ncell, const int nncell, SimData* simData)
+float DoGasPressureDisplacement(uint16_t elem_idx, const int cell, const int ncell, const int nncell, SimData* simData, SimEvents* simEvents)
 {
+    if (simEvents == NULL) simEvents = simData->simEvents.get();
+
     uint16_t nelem_idx = simData->cells->elementIdx[ncell];
-    if (  ((gElementPressureData[nelem_idx].state & 3) == 1)
-        && ( simData->updatedCells->elementIdx[cell  ] == elem_idx)
-        && ( simData->updatedCells->elementIdx[ncell ] == nelem_idx)
-        && ( simData->updatedCells->mass      [ncell ] >  0)
-        && ((simData->updatedCells->properties[nncell] &  1) == 0)
+    if ((gElementPressureData[nelem_idx].state & 3) != 1)       return 0.0f;
+    if (simData->updatedCells->elementIdx[cell  ] != elem_idx ) return 0.0f;
+    if (simData->updatedCells->elementIdx[ncell ] != nelem_idx) return 0.0f;
+    if (simData->updatedCells->mass      [ncell ] <= 0)         return 0.0f;
+    if (simData->updatedCells->properties[nncell] &  1)         return 0.0f;
+
 #ifdef __SIMDLL_PLUS__ // Introduce gas molar volume
-        && (simData->cells->mass[cell] * gElementPressureData[elem_idx].molarVolume > simData->cells->mass[ncell] * gElementPressureData[nelem_idx].molarVolume * gGasDisplace))
+#ifdef __PARALLEL__
+    int   thrIdx       = omp_get_thread_num();
+    float lGasDisplace = 1.01f + (float)RAND_FLOAT_01(simData->randomSeedT[thrIdx]) * 0.99f;
+    if (simData->cells->mass[cell] * gElementPressureData[elem_idx].molarVolume <= simData->cells->mass[ncell] * gElementPressureData[nelem_idx].molarVolume * lGasDisplace)
+        return 0.0f;
 #else
-        && (simData->cells->mass[cell]                                              > simData->cells->mass[ncell]))
+    if (simData->cells->mass[cell] * gElementPressureData[elem_idx].molarVolume <= simData->cells->mass[ncell] * gElementPressureData[nelem_idx].molarVolume * gGasDisplace)
+        return 0.0f;
 #endif
+#else
+    if (simData->cells->mass[cell] <= simData->cells->mass[ncell])
+        return 0.0f;
+#endif
+
+    if (   (simData->updatedCells->elementIdx[nncell] == nelem_idx)
+        || (simData->updatedCells->elementIdx[nncell] == simData->vacuumElementIdx))
     {
-        if (   (simData->updatedCells->elementIdx[nncell] == nelem_idx)
-            || (simData->updatedCells->elementIdx[nncell] == simData->vacuumElementIdx))
-        {
-            DoDisplacement(simData, simData->simEvents.get(), simData->updatedCells.get(), ncell, nncell);
+        DoDisplacement(simData, simEvents, simData->updatedCells.get(), ncell, nncell);
 #ifdef __SIMDLL_PLUS__ // [DoGasPressureDisplacement only] happen on 4 direction. Increase gas flow ratio to avoid element change.
-            float mass_delta = MIN_F(simData->updatedCells->mass[cell], simData->cells->mass[cell] * 0.2f);
+        float mass_delta = MIN_F(simData->updatedCells->mass[cell], simData->cells->mass[cell] * 0.2f);
 #else
-            float mass_delta = MIN_F(simData->updatedCells->mass[cell], simData->cells->mass[cell] * 0.125f);
+        float mass_delta = MIN_F(simData->updatedCells->mass[cell], simData->cells->mass[cell] * 0.125f);
 #endif
-            simData->updatedCells->mass       [ncell] += mass_delta;
-            simData->updatedCells->temperature[ncell]  = simData->cells->temperature[cell];
-            simData->updatedCells->elementIdx [ncell]  = elem_idx;
-            simData->simEvents->ChangeSubstance(simData, ncell);
-            float mass_tmp = simData->updatedCells->mass[cell] - mass_delta;
-            simData->updatedCells->mass[cell] = MAX_F(mass_tmp, 0.0f);
-            int disease_delta = simData->cells->diseaseCount[cell] >> 3; // (int)(simData->cells->diseaseCount[cell] * 0.125);
-            gDisease->AddDiseaseToCell(simData->updatedCells.get(), ncell, simData->cells->diseaseIdx[cell], disease_delta);
-            simData->updatedCells->ModifyDiseaseCount(cell, -disease_delta);
-            return mass_delta;
-        }
+        simData->updatedCells->mass       [ncell] += mass_delta;
+        simData->updatedCells->temperature[ncell] = simData->cells->temperature[cell];
+        simData->updatedCells->elementIdx [ncell] = elem_idx;
+        simEvents->ChangeSubstance(simData, ncell);
+        float mass_tmp = simData->updatedCells->mass[cell] - mass_delta;
+        simData->updatedCells->mass[cell] = MAX_F(mass_tmp, 0.0f);
+        int disease_delta = simData->cells->diseaseCount[cell] >> 3; // (int)(simData->cells->diseaseCount[cell] * 0.125);
+        gDisease->AddDiseaseToCell(simData->updatedCells.get(), ncell, simData->cells->diseaseIdx[cell], disease_delta);
+        simData->updatedCells->ModifyDiseaseCount(cell, -disease_delta);
+        return mass_delta;
     }
     return 0.0f;
 }
 
-float DoLiquidPressureDisplacement(uint16_t elem_idx, const int cell, const int ncell, const int nncell, SimData* simData)
+float DoLiquidPressureDisplacement(uint16_t elem_idx, const int cell, const int ncell, const int nncell, SimData* simData, SimEvents* simEvents)
 {
+    if (simEvents == NULL) simEvents = simData->simEvents.get();
+
     if (  ((simData->updatedCells->properties[ncell] & 2) == 0)
         && (simData->cells       ->elementIdx[ncell] != elem_idx)
         && (simData->updatedCells->elementIdx[ cell] == elem_idx)
@@ -999,8 +1033,14 @@ float DoLiquidPressureDisplacement(uint16_t elem_idx, const int cell, const int 
         float mass_org = simData->cells->mass[cell] - (simData->flow[cell].y + simData->flow[cell].x + simData->flow[cell].z + simData->flow[cell].w);
 #ifdef __DEBUGED__
         mass_org = MIN_F(simData->updatedCells->mass[cell] * 8, mass_org);
+        float massN2NN = simData->cells->mass[ncell];
+        if ((gElementPressureData[simData->cells->elementIdx[nncell]].state & 3) == 2)
+            massN2NN += simData->cells->mass[nncell];
+
+        if (mass_org > massN2NN                                                     && DisplaceLiquidDirectional(simData, simEvents, ncell, nncell)) {
+#else
+        if (mass_org > (simData->cells->mass[nncell] + simData->cells->mass[ncell]) && DisplaceLiquidDirectional(simData, simEvents, ncell, nncell)) {
 #endif
-        if (mass_org > (simData->cells->mass[nncell] + simData->cells->mass[ncell]) && DisplaceLiquidDirectional(simData, simData->simEvents.get(), ncell, nncell)) {
             float mass_delta = mass_org * 0.125f;
             simData->updatedCells->mass       [ncell] += mass_delta;
             simData->updatedCells->temperature[ncell]  = simData->cells->temperature[cell];
@@ -1021,6 +1061,9 @@ float DoLiquidPressureDisplacement(uint16_t elem_idx, const int cell, const int 
 void PostProcessCell(SimData* simData, SimEvents* simEvents, int cell_idx)
 {
 #define BIG_GAS(_cell) (simData->updatedCells->mass[_cell] >= 1.0f && (gElementPostProcessData[simData->updatedCells->elementIdx[_cell]].state & 3) == 1)
+#ifdef __PARALLEL__
+    int thrIdx = omp_get_thread_num();
+#endif
 
     ElementPostProcessData* data = &gElementPostProcessData[simData->updatedCells->elementIdx[cell_idx]];
     if ((data->state & 3) == 0) { // Vacuum
@@ -1069,14 +1112,22 @@ void PostProcessCell(SimData* simData, SimEvents* simEvents, int cell_idx)
                 // Random swap with left/right/bottom cell
                 // Hot cell has more chance
                 // Bottom cell must lighter than target cell
+#ifdef __PARALLEL__
+                if (RAND_FLOAT_01(simData->randomSeedT[thrIdx]) > 0.9) {
+#else
                 if (RAND_FLOAT_01(simData->randomSeed) > 0.9) {
+#endif
                     int   cell_swap = -1;
                     float temp_max = FLT_MAX;
                     int   cell_List[3] = { cell_idx_P, cell_idx_N, cell_idx_D };
                     bool  check_Molar[3] = { false, false, true };
                     for (int i = 0; i < 3; i++) {
                         int cell = cell_List[i];
+#ifdef __PARALLEL__
+                        if (simData->updatedCells->temperature[cell] <= temp_max && RAND_FLOAT_01(simData->randomSeedT[thrIdx]) > 0.5) {
+#else
                         if (simData->updatedCells->temperature[cell] <= temp_max && RAND_FLOAT_01(simData->randomSeed) > 0.5) {
+#endif
                             Element* elemenet = &gElements[simData->updatedCells->elementIdx[cell]];
                             if ((elemenet->state & 3) != 1)                               continue;
                             if (check_Molar[i] && data->molarMass <= elemenet->molarMass) continue;
@@ -1178,7 +1229,11 @@ void PostProcessCell(SimData* simData, SimEvents* simEvents, int cell_idx)
     if (data->sublimateIndex == 0xFFFF)                                   return;
     if ((gElementPostProcessData[simData->updatedCells->elementIdx[cell_Top]].state & 3) > 1) return;
     if (simData->updatedCells->properties[cell_Top] & 1)                  return;
+#ifdef __PARALLEL__
+    if (RAND_FLOAT_01(simData->randomSeedT[thrIdx]) >= data->sublimateProbability) return;
+#else
     if (RAND_FLOAT_01(simData->randomSeed) >= data->sublimateProbability) return;
+#endif
 
     int      cell_Bottom = cell_idx - simData->width;
     uint8_t  diseIdx_C   = simData->updatedCells->diseaseIdx  [cell_idx];
@@ -1259,31 +1314,29 @@ void PostProcessCell(SimData* simData, SimEvents* simEvents, int cell_idx)
 float UpdatePressure(SimData* simData, SimEvents* simEvents, CellSOA* cells, CellSOA* updated_cells,
 	int cell, uint16_t elem_idx, uint8_t elem_state, float elem_flow, int ncell)
 {
-//    LOGGER_PRINT2("%s: %d->%d\n", __func__, cell, ncell);
 	float flow = elem_state == 1 ? elem_flow : gElementPressureData[cells->elementIdx[ncell]].flow;
-	float massC2N = CLAMP_F(flow * (cells->mass[cell] - cells->mass[ncell]), cells->mass[cell] * 0.125f, cells->mass[ncell] * -0.125f);
+    float massC2N = CLAMP_F(flow * (cells->mass[cell] - cells->mass[ncell]), cells->mass[cell] * 0.125f, cells->mass[ncell] * -0.125f);
+    //LOGGER_PRINT_PARA("%s-1: %d->%d, mass %f\n", __func__, cell, ncell, massC2N);
 
 	int      cellSrc, cellDest;
 	uint16_t elemSrc, elemDest;
     uint8_t  stateDest;
-    if (massC2N > 1e-10) {
-		//Flow in
+	if (massC2N >= 0) {
+        //Flow out
 		elemSrc   = elem_idx;
 		elemDest  = cells->elementIdx[ncell];
 		stateDest = gElementPressureData[cells->elementIdx[ncell]].state & 3;
 		cellSrc   = cell;
 		cellDest  = ncell;
 	}
-	else if (massC2N < -1e-10) {
-		//Flow out
+	else {
+		//Flow in
 		elemSrc   = cells->elementIdx[ncell];
 		elemDest  = elem_idx;
 		stateDest = elem_state;
 		cellSrc   = ncell;
 		cellDest  = cell;
-		cells->elementIdx[ncell] = elem_idx;
 	}
-    else return 0; // Improve performance, Gas will be delete at 1e-9
 	float massMove    = MIN_F(cells->mass[cellSrc], fabsf(massC2N));
 	int   diseaseMove = (int)(CLAMP_F(massMove / cells->mass[cellSrc], 1, 0) * cells->diseaseCount[cellSrc]);
 
@@ -1320,7 +1373,7 @@ void UpdateLiquid(SimData* simData, SimEvents* simEvents, int cell_idx)
 {
 	float massOrg_C = simData->cells->mass[cell_idx];
 	int   elemIdx   = simData->cells->elementIdx[cell_idx];
-    LOGGER_LEVEL(1, "%s, cell %d, elem %s, mass %f\n", __func__, cell_idx, gElementNames[elemIdx].c_str(), massOrg_C);
+    // LOGGER_PRINT_PARA("%s, cell %d, elem %s, mass %f\n", __func__, cell_idx, gElementNames[elemIdx].c_str(), massOrg_C);
 
 	// Bottom cell
 	int cellBottom = cell_idx - simData->width;
@@ -1554,8 +1607,10 @@ void UpdateLiquid(SimData* simData, SimEvents* simEvents, int cell_idx)
 	}
 }
 
-void UpdateTemperature(SimData* simData, SimEvents* simEvents, const int cell, const int ncell)
+void UpdateTemperature(SimData* simData, const int cell, const int ncell, SimEvents* simEvents)
 {
+    if (simEvents == NULL) simEvents = simData->simEvents.get();
+
 	ASSERT_TEMP(simData->cells->mass[cell ], simData->cells->temperature[cell ]);
 	ASSERT_TEMP(simData->cells->mass[ncell], simData->cells->temperature[ncell]);
 
@@ -1591,7 +1646,11 @@ void UpdateTemperature(SimData* simData, SimEvents* simEvents, const int cell, c
 	float tempDelta      = tempOrg_n - tempOrg_c;
 	float heatCapacity_c = simData->cells->mass[cell ] * tempData_c->specificHeatCapacity;
 	float heatCapacity_n = simData->cells->mass[ncell] * tempData_n->specificHeatCapacity;
+#ifdef __DEBUGED__
+    float heatClamp      = MIN_F(tempOrg_n * heatCapacity_n,  tempOrg_c * heatCapacity_c);
+#else
     float heatClamp      = fabsf(tempOrg_n * heatCapacity_n - tempOrg_c * heatCapacity_c);
+#endif
     float heatTransfer   = fabsf(tempDelta * conduct_f);
 	heatTransfer        *= surfaceAreaMultiplier_c * surfaceAreaMultiplier_n * 0.2f;
 	heatTransfer         = MIN_F(heatClamp, heatTransfer);
@@ -1625,8 +1684,10 @@ void UpdateTemperature(SimData* simData, SimEvents* simEvents, const int cell, c
 	//Final check
 	ASSERT_TEMP(simData->updatedCells->mass[cell ], simData->updatedCells->temperature[cell ]);
 	ASSERT_TEMP(simData->updatedCells->mass[ncell], simData->updatedCells->temperature[ncell]);
+#ifndef __PARALLEL__
 	DoStateTransition(simData, simEvents, cell,  &gElementTemperatureData[simData->updatedCells->elementIdx[cell ]]);
 	DoStateTransition(simData, simEvents, ncell, &gElementTemperatureData[simData->updatedCells->elementIdx[ncell]]);
+#endif
 }
 
 void FloodRemoved(SimData* simData, float* mass_to_remove, int16_t remove_elem_idx, ConsumedMassInfo* removed_info, 

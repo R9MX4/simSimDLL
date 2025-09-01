@@ -59,7 +59,7 @@ namespace simSimDLL
 
     public unsafe class N_ReDirect
     {
-        static readonly bool DEBUG_FLAGS = true;
+        static readonly bool DEBUG_FLAGS = false;
         [HarmonyPatch(typeof(ConduitTemperatureManager), "ConduitTemperatureManager_Initialize")]
         public class EA_ConduitTemperatureManager_Initialize
         {
@@ -125,7 +125,7 @@ namespace simSimDLL
         {
             private static bool Prefix(float dt, IntPtr building_conductivity_data, ref IntPtr __result)
             {
-                if (DEBUG_FLAGS) Console.WriteLine("ConduitTemperatureManager_Update");
+                if (DEBUG_FLAGS) Console.WriteLine("ConduitTemperatureManager_Update: Time " + dt);
                 __result = A_PI.ConduitTemperatureManager_Update(dt, building_conductivity_data);
                 if (DEBUG_FLAGS) Console.WriteLine("ConduitTemperatureManager_Update done");
                 return false;
@@ -260,6 +260,7 @@ namespace simSimDLL
             }
         }
     }
+
     public unsafe class N_SimDLLPlus
     {
         [HarmonyPatch(typeof(SimMessages), "CreateSimElementsTable")]

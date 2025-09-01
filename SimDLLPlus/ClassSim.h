@@ -4,6 +4,7 @@
 
 #include "global.h"
 #include "ClassCell.h"
+
 //----- define struct -----
 struct Region
 {
@@ -528,7 +529,7 @@ class SimComponent
 {
 public:
 	//SimComponent_vtbl* __vftable /*VFT*/;
-	virtual void Update(float, SimData*, Region*) {}
+	virtual void Update(float, SimData*, Region*, SimEvents*) {}
 	virtual void UpdateDataListOnly(SimData*) {}
 };
 class BuildingHeatExchange : public CompactedVector<BuildingHeatExchangeData>, public SimComponent
@@ -539,7 +540,7 @@ public:
 	Handle Register(          SimData* simData, AddBuildingHeatExchangeMessage* msg);
 	void Unregister(int handle);
 	void Modify    (          SimData* simData, ModifyBuildingHeatExchangeMessage* msg);
-	void Update    (float dt, SimData* simData, Region* region);
+	void Update    (float dt, SimData* simData, Region* region, SimEvents* simEvents);
 	void UpdateDataListOnly(  SimData* simData);
 	void ChangeBuildingTemperature      (int buildingHandle, float newTemperature);
 	Handle GetSimHandleForBuildingHandle(int buildingHandle);
@@ -551,7 +552,7 @@ public:
 	void   Unregister(int handle);
 	void   Add       (          SimData* simData, AddInContactBuildingToBuildingToBuildingHeatExchangeMessage* msg);
 	void   Remove    (          SimData* simData, RemoveBuildingInContactFromBuildingToBuildingHeatExchangeMessage* msg);
-	void   Update    (float dt, SimData* simData, Region* region);
+	void   Update    (float dt, SimData* simData, Region* region, SimEvents* simEvents);
 };
 class ElementChunk : public CompactedVector<ElementChunkData>, public SimComponent
 {
@@ -563,37 +564,41 @@ public:
 	void Modify        (          SimData* simData, ModifyElementChunkMessage* msg);
 	void ModifyAdjuster(          SimData* simData, ModifyElementChunkAdjusterMessage* msg);
 	void ModifyEnergy  (          SimData* simData, ModifyElementChunkEnergyMessage* msg);
-	void Update        (float dt, SimData* simData, Region* region);
+	void Update        (float dt, SimData* simData, Region* region, SimEvents* simEvents);
 	void UpdateDataListOnly      (SimData* simData);
 };
 class ElementConsumer : public CompactedVector<ElementConsumerData>, public SimComponent
 {
 public:
-	std::vector<int>          visited;
-	std::queue<FloodFillInfo> next;
-	std::vector<int>          reachableCells;
 	std::vector<ConsumedMassInfo> consumedMassInfo;
+#ifndef __PARALLEL__
+	std::vector<int> visitedCells;
+	std::vector<int> reachableCells;
+	std::queue<FloodFillInfo> next;
+#endif
 
 	Handle Register(          SimData* simData, AddElementConsumerMessage* msg);
 	void Unregister(int handle);
 	void Modify    (          SimData* simData, ModifyElementConsumerMessage* msg);
-	void Update    (float dt, SimData* simData, Region* region);
+	void Update    (float dt, SimData* simData, Region* region, SimEvents* simEvents);
 };
 class ElementEmitter : public CompactedVector<ElementEmitterData>, public SimComponent
 {
 public:
 	std::vector<EmittedMassInfo> emittedMassInfo;
+#ifndef __PARALLEL__
 	std::vector<int> visitedCells;
 	std::vector<int> reachableCells;
 	std::queue<FloodFillInfo> next;
+#endif
 
 	Handle Register(          SimData* simData, AddElementEmitterMessage* msg);
 	void Unregister(int handle);
 	void Modify    (          SimData* simData, ModifyElementEmitterMessage* msg);
-	void Update    (float dt, SimData* simData, Region* region);
+	void Update    (float dt, SimData* simData, Region* region, SimEvents* simEvents);
 	void UpdateDataListOnly(SimData* simData);
-	EmittedMassInfo Emit   (ElementEmitterData* data, int cell_idx,            float tempEmit, SimData* simData);
-	EmittedMassInfo TryEmit(ElementEmitterData* data, std::vector<int>& cells, int   offset,   SimData* simData);
+	EmittedMassInfo Emit   (ElementEmitterData* data, int cell_idx,            float tempEmit, SimData* simData, SimEvents* simEvents);
+	EmittedMassInfo TryEmit(ElementEmitterData* data, std::vector<int>& cells, int   offset,   SimData* simData, SimEvents* simEvents);
 };
 class RadiationEmitter : CompactedVector<RadiationEmitterData>, public SimComponent
 {
@@ -601,20 +606,22 @@ public:
 	Handle Register(          SimData* simData, AddRadiationEmitterMessage* msg);
 	void Unregister(int handle);
 	void Modify    (          SimData* simData, ModifyRadiationEmitterMessage* msg);
-	void Update    (float dt, SimData* simData, Region* region);
+	void Update    (float dt, SimData* simData, Region* region, SimEvents* simEvents);
 };
-class DiseaseEmitter : CompactedVector<DiseaseEmitterData>, public SimComponent
+class DiseaseEmitter : public CompactedVector<DiseaseEmitterData>, public SimComponent
 {
 public:
 	std::vector<DiseaseEmittedInfo> emittedInfo;
-	std::queue<FloodFillInfo> next;
+#ifndef __PARALLEL__
 	std::vector<int> visitedCells;
 	std::vector<int> reachableCells;
+	std::queue<FloodFillInfo> next;
+#endif
 
 	Handle Register(          SimData* simData, AddDiseaseEmitterMessage* msg);
 	void Unregister(int handle);
 	void Modify    (          SimData* simData, ModifyDiseaseEmitterMessage* msg);
-	void Update    (float dt, SimData* simData, Region* region);
+	void Update    (float dt, SimData* simData, Region* region, SimEvents* simEvents);
 	void UpdateDataListOnly(  SimData* simData);
 };
 class DiseaseConsumer : CompactedVector<DiseaseConsumerData>, public SimComponent
@@ -683,6 +690,7 @@ public:
 	float RADIATION_CONSTRUCTED_FACTOR;
 	std::vector<SimData::WorldOffsetData> worlds;
 	uint32_t randomSeed;
+	uint32_t randomSeedT[OPENMP_MAX_THREAD];
 
 	explicit SimData(int sim_width, int sim_height, bool radiation_enabled, bool headless);
 	void	ApplySaveSettings(uint8_t newSaveOptions);
@@ -690,10 +698,10 @@ public:
 	uint8_t	GetStableTicksRemaining(uint64_t sim_cell);
 	void	SetBoundary(int cell);
 	void	InitializeBoundary();
-	void	SettleThermalBoundaries(CellSOA * src_cells, CellSOA * dest_cells);
-	void	UpdateComponents(float dt, Region * region);
+	void	SettleThermalBoundaries(CellSOA* src_cells, CellSOA* dest_cells);
+	void	UpdateComponents(float dt, Region* region, SimEvents* simEvents = NULL);
 	void	UpdateComponentsDataListOnly();
-	static	int FreeGridCells(BinaryBufferReader * reader);
+	static	int FreeGridCells(BinaryBufferReader* reader);
 	static  int InitializeFromCells(BinaryBufferReader* reader);
 	static  int	ResizeAndInitializeVacuumCells(BinaryBufferReader* reader);
 	static	int SetWorldZones(BinaryBufferReader* reader);

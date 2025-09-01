@@ -7,6 +7,7 @@
 #include "ClassDisease.h"
 #include "ClassSim.h"
 #include "GameData.h"
+
 //----- define struct -----
 struct DigPoint
 {
@@ -265,12 +266,13 @@ class SimBase
 
 	//SimBase_vtbl* __vftable /*VFT*/;
 #ifndef __THREAD_DECOUPLE__
-	ParallelTaskQueue* taskQueue;
-	std::vector<SimUpdateTask*> temperatureTasks;
-	std::vector<SimEvents*>     simEvents;
+	ParallelTaskQueue*                           taskQueue;
+	std::vector<SimUpdateTask*>                  temperatureTasks;
 	std::vector<UpdateCellTask<Vector4<float>>*> copyFlowTasks;
 	std::vector<UpdateCellSOATask*>              copyToGameTasks;
 #endif
+	std::vector<SimEvents*> simEvents;
+	SimEvents simEventsT[OPENMP_MAX_THREAD];
 
 public:
 	SimFrameManager simFrameManager;
@@ -279,11 +281,12 @@ public:
 	explicit SimBase();
 	~SimBase();
 	// void DestroyTasks();
+	void UpdateDataPara(SimData* simData);
 	void UpdateData(SimData* simData);
 #ifndef __THREAD_DECOUPLE__
 	void InitializeUpdateTasks();
-	void ConsolidateEvents(SimData* simData);
 #endif
+	void ConsolidateEvents(SimData* simData);
 	void CopyUpdatedCellsToCells(SimData* simData);
 	void CopySimDataToGame(SimData* simData, GameData* new_game_data, const GameData* old_game_data, int num_frames_processed);
 };

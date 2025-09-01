@@ -23,6 +23,7 @@ struct RadiationAbsorption {
         this->absorption *= 1 - CLAMP_F(absorb, 1, 0);
     }
 };
+
 //----- (New add) ----------------------------------------------------
 //Flood__lambda_9390f724927d7d28953bae36843a8903_
 void FindCellbyDepth(std::vector<uint16_t> elemIdx, int width, uint16_t src_x, uint16_t src_y, short remain_depth, 
@@ -332,9 +333,14 @@ void tickConstant(SimData* simData, Region* region, RadiationEmitterData* item, 
             float loss   = 1 - fabsf(ratioX) - fabsf(ratioY) + fabsf(ratioX * ratioY);
             float lossEx = 0;
             float absorb = RadiationAbsorptionAlongLine(simData, cenX, cenY, locX, locY) * loss * item->emitRads / simData->RADIATION_LINGER_RATE;
-            if (loss < 0.25)
+            if (loss < 0.25) {
+#ifdef __PARALLEL__
+                int thrIdx = omp_get_thread_num();
+                lossEx = (float)(RAND_FLOAT_01(simData->randomSeedT[thrIdx]) * 0.25 - absorb * 0.125);
+#else
                 lossEx = (float)(RAND_FLOAT_01(simData->randomSeed) * 0.25 - absorb * 0.125);
-            
+#endif
+            }
             simData->updatedCells->radiation[locX + simData->width * locY] += lossEx + absorb;
         }
     }
@@ -493,10 +499,12 @@ void BuildingHeatExchange::Unregister(int handle)
     this->Free(handle);
 }
 
-void BuildingHeatExchange::Update(float dt, SimData* simData, Region* region)
+void BuildingHeatExchange::Update(float dt, SimData* simData, Region* region, SimEvents* simEvents)
 {
-    LOGGER_LEVEL(1, "BuildingHeatExchange %s-%llu\n", __func__, this->data.size());
+    LOGGER_LEVEL(1, "BuildingHeatExchange %s-%llu, simEvents %lld\n", __func__, this->data.size(), simEvents);
+#ifndef __PARALLEL__
     this->temperatureInfo.resize(this->handles.items.size());
+#endif
     for (int i = 0; i < this->data.size(); i++) {
         if (this->data[i].simMin.x < region->minimum.x) continue;
         if (this->data[i].simMin.y < region->minimum.y) continue;
@@ -543,7 +551,7 @@ void BuildingHeatExchange::Update(float dt, SimData* simData, Region* region)
                             LOGGER_PRINT("Cell Elem %s. mass %f, SHC %f\n", gElementNames[simData->updatedCells->elementIdx[cell]].c_str(), simData->updatedCells->mass[cell], elem->specificHeatCapacity);
                     }
                     simData->updatedCells->temperature[cell] = tempCellFin;
-                    DoStateTransition(simData, simData->simEvents.get(), cell, elem);
+                    DoStateTransition(simData, simEvents, cell, elem);
                     HeatTransBuild += HeatTrans;
                 }
             }
@@ -556,15 +564,15 @@ void BuildingHeatExchange::Update(float dt, SimData* simData, Region* region)
 
             if (tempBuildFin >= this->data[i].overheatTemperature) {
                 MeltedInfo info = { .handle = this->dataHandleIndices[i] };
-                simData->simEvents->buildingOverheatInfo.push_back(info);
+                simEvents->buildingOverheatInfo.push_back(info);
             }
             else if (tempBulid >= this->data[i].overheatTemperature) {
                 MeltedInfo info = { .handle = this->dataHandleIndices[i] };
-                simData->simEvents->buildingNoLongerOverheatedInfo.push_back(info);
+                simEvents->buildingNoLongerOverheatedInfo.push_back(info);
             }
             if (tempBuildFin >= this->data[i].highTemp) {
                 MeltedInfo info = { .handle = this->dataHandleIndices[i] };
-                simData->simEvents->buildingMeltedInfo.push_back(info);
+                simEvents->buildingMeltedInfo.push_back(info);
             }
             this->data[i].temperature = tempBuildFin;
         }
@@ -609,7 +617,14 @@ Handle BuildingHeatExchange::GetSimHandleForBuildingHandle(int buildingHandle)
 
 Handle BuildingToBuildingHeatExchange::Register(SimData* simData, RegisterBuildingToBuildingHeatExchangeMessage* msg)
 {
-    Handle handle = HANDLE_AVAILABLE(msg->heatExchange_handle, simData->buildingHeatExchange.handles.versions) ? msg->heatExchange_handle : -1;
+    Handle handle = -1;
+    if (HANDLE_AVAILABLE(msg->heatExchange_handle, simData->buildingHeatExchange.handles.versions)) {
+        BuildingToBuildingHeatExchangeData new_data = {
+            .heatExchange_handle    = msg->heatExchange_handle,
+            .inContactBuildingsData = std::vector<InContactBuildingData>()
+        };
+        handle = this->AddData(&new_data);
+    }
     if (msg->callbackIdx != -1) {
         ComponentStateChangedMessage callback = { .callbackIdx = msg->callbackIdx, .simHandle = handle };
         simData->simEvents->componentStateChangedMessages.push_back(callback);
@@ -627,38 +642,29 @@ void BuildingToBuildingHeatExchange::Unregister(int handle)
 void BuildingToBuildingHeatExchange::Add(SimData* simData, AddInContactBuildingToBuildingToBuildingHeatExchangeMessage* msg)
 {
     BuildingToBuildingHeatExchangeData* data = this->GetData(msg->self_handle);
-    BuildingToBuildingHeatExchangeData result = { 
-        .heatExchange_handle    = data->heatExchange_handle , 
-        .inContactBuildingsData = std::vector<InContactBuildingData>(data->inContactBuildingsData) 
-    };
     InContactBuildingData info = { .inContactBuildingHandler = msg->buildingInContact, .cellsInContact = msg->cellsInContact };
-    result.inContactBuildingsData.push_back(info);
-    this->SetData(msg->self_handle, &result);
+    data->inContactBuildingsData.push_back(info);
+    this->SetData(msg->self_handle, data);
 }
 
 void BuildingToBuildingHeatExchange::Remove(SimData* simData, RemoveBuildingInContactFromBuildingToBuildingHeatExchangeMessage* msg)
 {
     BuildingToBuildingHeatExchangeData* data = this->GetData(msg->self_handle);
-    BuildingToBuildingHeatExchangeData current_data = {
-        .heatExchange_handle    = data->heatExchange_handle ,
-        .inContactBuildingsData = std::vector<InContactBuildingData>(data->inContactBuildingsData)
-    };
-
-    for (auto it = current_data.inContactBuildingsData.begin(); it != current_data.inContactBuildingsData.end(); it++) {
+    for (auto it = data->inContactBuildingsData.begin(); it != data->inContactBuildingsData.end(); it++) {
         if (it->inContactBuildingHandler == msg->buildingInContact) {
-            current_data.inContactBuildingsData.erase(it);
-            this->SetData(msg->self_handle, &current_data);
+            data->inContactBuildingsData.erase(it);
+            this->SetData(msg->self_handle, data);
             return;
         }
     }
 }
 
-void BuildingToBuildingHeatExchange::Update(float dt, SimData* simData, Region* region)
+void BuildingToBuildingHeatExchange::Update(float dt, SimData* simData, Region* region, SimEvents* simEvents)
 {
 #define GET_BUILD_BY_HANDLE(_handle) \
     (simData->buildingHeatExchange.data[simData->buildingHeatExchange.handles.items[_handle & 0xFFFFFF]])
 
-    LOGGER_LEVEL(1, "BuildingToBuildingHeatExchange %s-%llu\n", __func__, this->data.size());
+    //LOGGER_LEVEL(1, "BuildingToBuildingHeatExchange %s-%llu, simEvents %lld, exchange %lld\n", __func__, this->data.size(), simEvents, simData->buildingHeatExchange.data.size());
     for (BuildingToBuildingHeatExchangeData data : this->data) {
         if (!HANDLE_AVAILABLE(data.heatExchange_handle, simData->buildingHeatExchange.handles.versions))
             continue;
@@ -678,6 +684,8 @@ void BuildingToBuildingHeatExchange::Update(float dt, SimData* simData, Region* 
             tempMin = MIN_F(dataExchange->temperature, tempMin);
             tempMax = MAX_F(dataExchange->temperature, tempMax);
         }
+        if (tempMax == tempMin) // New Add
+            continue;
 
         for (InContactBuildingData dataCont : data.inContactBuildingsData) {
             if (!HANDLE_AVAILABLE(dataCont.inContactBuildingHandler, simData->buildingHeatExchange.handles.versions))
@@ -706,11 +714,11 @@ void BuildingToBuildingHeatExchange::Update(float dt, SimData* simData, Region* 
             Handle handleCont = simData->buildingHeatExchange.GetSimHandleForBuildingHandle(dataCont.inContactBuildingHandler);
             if (tempCont >= buildCont.overheatTemperature) {
                 MeltedInfo info = { .handle = handleCont };
-                simData->simEvents->buildingOverheatInfo.push_back(info);
+                simEvents->buildingOverheatInfo.push_back(info);
             }
             else if (buildCont.temperature >= buildCont.overheatTemperature) {
                 MeltedInfo info = { .handle = handleCont };
-                simData->simEvents->buildingNoLongerOverheatedInfo.push_back(info);
+                simEvents->buildingNoLongerOverheatedInfo.push_back(info);
             }
             buildCont.temperature = tempCont;
             simData->buildingHeatExchange.ChangeBuildingTemperature(dataCont.inContactBuildingHandler, tempCont );
@@ -771,10 +779,12 @@ void ElementChunk::ModifyEnergy(SimData* simData, ModifyElementChunkEnergyMessag
         Data->temperature = CLAMP_F(msg->deltaKJ / Data->heatCapacity + Data->temperature, SIM_MAX_TEMPERATURE, 0);
 }
 
-void ElementChunk::Update(float dt, SimData* simData, Region* region)
+void ElementChunk::Update(float dt, SimData* simData, Region* region, SimEvents* simEvents)
 {
-    LOGGER_LEVEL(1, "ElementChunk %s-%llu\n", __func__, this->data.size());
+    LOGGER_LEVEL(1, "ElementChunk %s-%llu, simEvents %lld\n", __func__, this->data.size(), simEvents);
+#ifndef __PARALLEL__
     this->chunkInfo.resize(this->handles.items.size());
+#endif
     for (int idx = 0; idx < this->data.size(); idx++) {
         float heatTrans = 0;
         int cell = this->data[idx].cell;
@@ -789,7 +799,7 @@ void ElementChunk::Update(float dt, SimData* simData, Region* region)
                 float tempFinCell, tempFinItem;
                 ConductTemperature(dt, 1, adjuster.temperature, adjuster.heatCapacity, adjuster.thermalConductivity, 1,
                     data[idx].temperature, this->data[idx].heatCapacity, adjuster.thermalConductivity, 1, &tempFinCell, &tempFinItem);
-                data[idx].temperature = tempFinItem;
+                this->data[idx].temperature = tempFinItem;
             }
             else {
                 CellAccessor sim_cell (simData->updatedCells.get(), cell);
@@ -809,7 +819,7 @@ void ElementChunk::Update(float dt, SimData* simData, Region* region)
             this->data[idx].temperature < this->data[idx].lowTemp - 3)
         {
             MeltedInfo info = { .handle = this->dataHandleIndices[idx] };
-            simData->simEvents->elementChunkMeltedInfo.push_back(info);
+            simEvents->elementChunkMeltedInfo.push_back(info);
         }
     }
 
@@ -858,9 +868,18 @@ void ElementConsumer::Modify(SimData* simData, ModifyElementConsumerMessage* msg
     this->data[item].consumptionRate = msg->consumptionRate;
 }
 
-void ElementConsumer::Update(float dt, SimData* simData, Region* region)
+void ElementConsumer::Update(float dt, SimData* simData, Region* region, SimEvents* simEvents)
 {
-    LOGGER_LEVEL(1, "ElementConsumer %s. Total: %llu\n", __func__, this->data.size());
+    LOGGER_LEVEL(1, "ElementConsumer %s. Total: %llu, simEvents %lld\n", __func__, this->data.size(), simEvents);
+#ifndef __PARALLEL__
+    std::vector<int>& visitedCellsLoc   = this->visitedCells;
+    std::vector<int>& reachableCellsLoc = this->reachableCells;
+    std::queue<FloodFillInfo>& nextLoc  = this->next;
+#else
+    std::vector<int> visitedCellsLoc;
+    std::vector<int> reachableCellsLoc;
+    std::queue<FloodFillInfo> nextLoc;
+#endif
     for (int idx = 0; idx < this->data.size(); idx++) {
         ElementConsumerData& data = this->data[idx];
         //int cell = data.cell.y * simData->width + data.cell.x; //debug
@@ -873,16 +892,16 @@ void ElementConsumer::Update(float dt, SimData* simData, Region* region)
         uint16_t elemRemove = data.elemIdx; // data.configuration == 0
         bool     findFlag   = true;         // data.configuration == 0
         if (data.configuration == 1) {
-            GetReachableCells(simData, data.cell.x, data.cell.y, data.maxDepth, &this->visited, &this->next, &this->reachableCells, true);
-            findFlag = AnyInputCellHasState(simData, &this->reachableCells, &elemRemove, ElementState::State::Liquid, data.offsetIdx);
+            GetReachableCells(simData, data.cell.x, data.cell.y, data.maxDepth, &visitedCellsLoc, &nextLoc, &reachableCellsLoc, true);
+            findFlag = AnyInputCellHasState(simData, &reachableCellsLoc, &elemRemove, ElementState::State::Liquid, data.offsetIdx);
         }
         else if (data.configuration == 2) {
-            GetReachableCells(simData, data.cell.x, data.cell.y, data.maxDepth, &this->visited, &this->next, &this->reachableCells, true);
-            findFlag = AnyInputCellHasState(simData, &this->reachableCells, &elemRemove, ElementState::State::Gas, data.offsetIdx);
+            GetReachableCells(simData, data.cell.x, data.cell.y, data.maxDepth, &visitedCellsLoc, &nextLoc, &reachableCellsLoc, true);
+            findFlag = AnyInputCellHasState(simData, &reachableCellsLoc, &elemRemove, ElementState::State::Gas, data.offsetIdx);
         }
 
-        this->reachableCells.clear();
-        this->visited.clear();
+        reachableCellsLoc.clear();
+        visitedCellsLoc.clear();
         if (!findFlag)
             continue;
 
@@ -895,12 +914,12 @@ void ElementConsumer::Update(float dt, SimData* simData, Region* region)
             .diseaseCount   = 0,
         };
         float massConsume = dt * data.consumptionRate;
-        FloodRemoved(simData, &massConsume, elemRemove, &info, data.cell.x, data.cell.y, data.maxDepth, &this->visited, &this->next);
+        FloodRemoved(simData, &massConsume, elemRemove, &info, data.cell.x, data.cell.y, data.maxDepth, &visitedCellsLoc, &nextLoc);
 
         if (info.mass > 0)
             this->consumedMassInfo.push_back(info);
-        while (!this->next.empty())
-            this->next.pop();
+        while (!nextLoc.empty())
+            nextLoc.pop();
         data.offsetIdx++;
     }
 
@@ -965,10 +984,19 @@ void ElementEmitter::Modify(SimData* simData, ModifyElementEmitterMessage* msg)
         this->data[item].blockedState = -1;
 }
 
-void ElementEmitter::Update(float dt, SimData* simData, Region* region)
+void ElementEmitter::Update(float dt, SimData* simData, Region* region, SimEvents* simEvents)
 {
-    LOGGER_LEVEL(1, "ElementEmitter %s-%llu\n", __func__, this->data.size());
+    LOGGER_LEVEL(1, "ElementEmitter %s-%llu, simEvents %lld\n", __func__, this->data.size(), simEvents);
+#ifndef __PARALLEL__
     this->emittedMassInfo.resize(this->handles.items.size());
+    std::vector<int>& visitedCellsLoc   = this->visitedCells;
+    std::vector<int>& reachableCellsLoc = this->reachableCells;
+    std::queue<FloodFillInfo>& nextLoc  = this->next;
+#else
+    std::vector<int> visitedCellsLoc;
+    std::vector<int> reachableCellsLoc;
+    std::queue<FloodFillInfo> nextLoc;
+#endif
     for (int idx = 0; idx < this->data.size(); idx++) {
         ElementEmitterData& data = this->data[idx];
 
@@ -981,9 +1009,9 @@ void ElementEmitter::Update(float dt, SimData* simData, Region* region)
             int handleVal = this->dataHandleIndices[idx] & 0xFFFFFF;
             uint16_t elemIdx = this->emittedMassInfo[handleVal].elemIdx;
             if (elemIdx == 0xFFFF || elemIdx == simData->vacuumElementIdx || elemIdx == data.elemIdx) {
-                GetReachableCells(simData, data.cell.x, data.cell.y, data.maxDepth, &this->visitedCells, &this->next, &this->reachableCells, true);
+                GetReachableCells(simData, data.cell.x, data.cell.y, data.maxDepth, &visitedCellsLoc, &nextLoc, &reachableCellsLoc, true);
                 bool emitFlag = false;
-                for (int cell : this->reachableCells) {
+                for (int cell : reachableCellsLoc) {
                     if (data.maxPressure > simData->updatedCells->mass[cell]) {
                         emitFlag = true;
                         break;
@@ -1000,18 +1028,18 @@ void ElementEmitter::Update(float dt, SimData* simData, Region* region)
                 }
                 if (callbackIdx != -1) {
                     CallbackInfo info{ .callbackIdx = callbackIdx };
-                    simData->simEvents->callbackInfo.push_back(info);
+                    simEvents->callbackInfo.push_back(info);
                 }
 
-                EmittedMassInfo info = this->TryEmit(&data, this->reachableCells, data.offsetIdx, simData);
+                EmittedMassInfo info = this->TryEmit(&data, reachableCellsLoc, data.offsetIdx, simData, simEvents);
                 if (info.mass > 0) {
                     this->emittedMassInfo[handleVal].temperature = CalculateFinalTemperature(
                         this->emittedMassInfo[handleVal].mass, this->emittedMassInfo[handleVal].temperature, info.mass, info.temperature);
                     this->emittedMassInfo[handleVal].elemIdx     = info.elemIdx;
                     this->emittedMassInfo[handleVal].mass       += info.mass;
                 }
-                this->visitedCells.clear();
-                this->reachableCells.clear();
+                visitedCellsLoc.clear();
+                reachableCellsLoc.clear();
             }
             data.elapsedTime -= data.emitInterval;
         }
@@ -1034,7 +1062,7 @@ void ElementEmitter::UpdateDataListOnly(SimData* simData)
     }
 }
 
-EmittedMassInfo ElementEmitter::Emit(ElementEmitterData* data, int cell_idx, float tempEmit, SimData* simData)
+EmittedMassInfo ElementEmitter::Emit(ElementEmitterData* data, int cell_idx, float tempEmit, SimData* simData, SimEvents* simEvents)
 {
     if (simData->updatedCells->elementIdx[cell_idx] == data->elemIdx ||
         simData->updatedCells->elementIdx[cell_idx] == simData->vacuumElementIdx)
@@ -1050,7 +1078,7 @@ EmittedMassInfo ElementEmitter::Emit(ElementEmitterData* data, int cell_idx, flo
             int cellInner = CELL_S2G(cell_idx, simData->width);
             if (CELL_AVAILABLE(cellInner, simData)) {
                 SubstanceChangeInfo info{ cellInner, (uint16_t)-1, (uint16_t)-1 };
-                simData->simEvents->substanceChangeInfo.push_back(info);
+                simEvents->substanceChangeInfo.push_back(info);
             }
             simData->timers[cell_idx].stableCellTicks |= 0x1F;
         }
@@ -1065,7 +1093,7 @@ EmittedMassInfo ElementEmitter::Emit(ElementEmitterData* data, int cell_idx, flo
     return result;
 }
 
-EmittedMassInfo ElementEmitter::TryEmit(ElementEmitterData* data, std::vector<int>& reachable_cells, int offset, SimData* simData)
+EmittedMassInfo ElementEmitter::TryEmit(ElementEmitterData* data, std::vector<int>& reachable_cells, int offset, SimData* simData, SimEvents* simEvents)
 {
     float   emitTemperature = data->emitTemperature >= 0 ? data->emitTemperature : gElements[data->elemIdx].defaultValues.temperature;
     uint8_t state = gElements[data->elemIdx].state & 3;
@@ -1080,18 +1108,18 @@ EmittedMassInfo ElementEmitter::TryEmit(ElementEmitterData* data, std::vector<in
             if (state == 1) {
                 if (elem == data->elemIdx ||
                     elem == simData->vacuumElementIdx ||
-                    DisplaceGas(simData, simData->simEvents.get(), simData->updatedCells.get(), cell, elem))
+                    DisplaceGas(simData, simEvents, simData->updatedCells.get(), cell, elem))
                 {
-                    return this->Emit(data, cell, emitTemperature, simData);
+                    return this->Emit(data, cell, emitTemperature, simData, simEvents);
                 }
             }
             else if (state == 2) {
                 if (elem == data->elemIdx ||
                     elem == simData->vacuumElementIdx ||
-                    DisplaceLiquid(simData, simData->simEvents.get(), simData->updatedCells.get(), cell, elem) ||
-                    DisplaceGas(simData, simData->simEvents.get(), simData->updatedCells.get(), cell, elem))
+                    DisplaceLiquid(simData, simEvents, simData->updatedCells.get(), cell, elem) ||
+                    DisplaceGas(simData, simEvents, simData->updatedCells.get(), cell, elem))
                 {
-                    return this->Emit(data, cell, emitTemperature, simData);
+                    return this->Emit(data, cell, emitTemperature, simData, simEvents);
                 }
             }
             else if (state == 3) {
@@ -1105,11 +1133,8 @@ EmittedMassInfo ElementEmitter::TryEmit(ElementEmitterData* data, std::vector<in
                         .temperature  = emitTemperature,
                         .diseaseCount = 0
                     };
-                    simData->simEvents->spawnOreInfo.push_back(info);
+                    simEvents->spawnOreInfo.push_back(info);
                 }
-#ifdef __DEBUGED__
-                break;
-#endif
             }
         }
     }
@@ -1165,9 +1190,9 @@ void RadiationEmitter::Modify(SimData* simData, ModifyRadiationEmitterMessage* m
     this->data[item].emitType      = (RadiationEmitterType)msg->emitType;
 }
 
-void RadiationEmitter::Update(float dt, SimData* simData, Region* region)
+void RadiationEmitter::Update(float dt, SimData* simData, Region* region, SimEvents* simEvents)
 {
-    LOGGER_LEVEL(1, "RadiationEmitter %s-%llu\n", __func__, this->data.size());
+    LOGGER_LEVEL(1, "RadiationEmitter %s-%llu, simEvents %lld\n", __func__, this->data.size(), simEvents);
     if (!simData->radiationEnabled) return;
     for (int idx = 0; idx < this->data.size(); idx++) {
         RadiationEmitterData& data = this->data[idx];
@@ -1251,10 +1276,19 @@ void DiseaseEmitter::Modify(SimData* simData, ModifyDiseaseEmitterMessage* msg)
     this->data[item].emitInterval = msg->emitInterval;
 }
 
-void DiseaseEmitter::Update(float dt, SimData* simData, Region* region)
+void DiseaseEmitter::Update(float dt, SimData* simData, Region* region, SimEvents* simEvents)
 {
-    LOGGER_LEVEL(1, "DiseaseEmitter %s-%llu\n", __func__, this->data.size());
+    LOGGER_LEVEL(1, "DiseaseEmitter %s-%llu, simEvents %lld\n", __func__, this->data.size(), simEvents);
+#ifndef __PARALLEL__
     this->emittedInfo.resize(this->handles.items.size());
+    std::vector<int>& visitedCellsLoc   = this->visitedCells;
+    std::vector<int>& reachableCellsLoc = this->reachableCells;
+    std::queue<FloodFillInfo>& nextLoc  = this->next;
+#else
+    std::vector<int> visitedCellsLoc;
+    std::vector<int> reachableCellsLoc;
+    std::queue<FloodFillInfo> nextLoc;
+#endif
     for (DiseaseEmitterData& data : this->data) {
         int locX = data.cell % simData->width;
         int locY = data.cell / simData->width;
@@ -1265,8 +1299,8 @@ void DiseaseEmitter::Update(float dt, SimData* simData, Region* region)
         if (locY > region->maximum.y) continue;
 
         if (data.elapsedTime >= data.emitInterval) {
-            GetReachableCells(simData, locX, locY, data.range, &this->visitedCells, &this->next, &this->reachableCells, false);
-            for (int cell : this->reachableCells)
+            GetReachableCells(simData, locX, locY, data.range, &visitedCellsLoc, &nextLoc, &reachableCellsLoc, false);
+            for (int cell : reachableCellsLoc)
                 if (simData->updatedCells->diseaseIdx[cell] == data.diseaseIdx)
                     gDisease->AddDiseaseToCell(simData->updatedCells.get(), cell, data.diseaseIdx, data.emitCount);
 #ifdef __DEBUGED__

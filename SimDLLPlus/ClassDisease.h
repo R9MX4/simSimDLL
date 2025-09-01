@@ -3,6 +3,7 @@
 #define CLASS_DISEASE_H
 
 #include "global.h"
+
 //----- define struct -----
 struct DiseaseResult
 {
@@ -55,8 +56,8 @@ public:
 	float	GetDiffusionScale	(const SimData* simData, int cell_idx);
 	uint8_t	GetDiseaseIndex		(uint32_t disease_hash);
 	void	PostProcess			(SimData* simData, SimEvents* simEvents, int x_start, const int x_end, int y_start, int y_end);
+	void	PostProcessOneCell	(SimData* simData, int cell);
 	void	UpdateCells			(float dt, SimData* simData, SimEvents* simEvents, int cell, int ncell);
 	DiseaseResult* CalculateFinalDiseaseCount(DiseaseResult* result, uint8_t src1_idx, int src1_count, uint8_t src2_idx, int src2_count);
 };
-
 #endif

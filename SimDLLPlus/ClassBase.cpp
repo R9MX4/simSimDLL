@@ -1,16 +1,6 @@
 #include "ClassBase.h"
 #include <iterator>
 
-//----- (Variable) ---------------------------------------------------
-int noffset    = -1;
-int tick_count = 0;
-const static Vector3<float> adjacentOffsets[25] = {
-	{-2, -2, 0.1f }, {-1, -2, 0.15f}, {0, -2, 0.25f}, {1, -2, 0.15f}, {2, -2, 0.1f },
-	{-2, -1, 0.15f}, {-1, -1, 0.5f }, {0, -1, 0.75f}, {1, -1, 0.5f }, {2, -1, 0.15f},
-	{-2,  0, 0.25f}, {-1,  0, 0.75f}, {0,  0, 1    }, {1,  0, 0.75f}, {2,  0, 0.25f},
-	{-2,  1, 0.15f}, {-1,  1, 0.5f }, {0,  1, 0.75f}, {1,  1, 0.5f }, {2,  1, 0.15f},
-	{-2,  2, 0.1f }, {-1,  2, 0.15f}, {0,  2, 0.25f}, {1,  2, 0.15f}, {2,  2, 0.1f } };
-
 //----- (Decompiled Basic) -------------------------------------------
 void UpdateFlowTexture(const SimData* simData, GameData* new_game_data)
 {
@@ -125,7 +115,7 @@ void ReplaceAndDisplaceElement(int sim_cell_idx, uint16_t element_idx, float mas
 {
 	uint16_t elemCell = simData->updatedCells->elementIdx[sim_cell_idx];
 	uint8_t  state    = gElements[elemCell].state & 3;
-	if      (state == 1) DisplaceGas(   simData, simData->simEvents.get(), simData->updatedCells.get(), sim_cell_idx, elemCell);
+	if      (state == 1) DisplaceGas   (simData, simData->simEvents.get(), simData->updatedCells.get(), sim_cell_idx, elemCell);
 	else if (state == 2) DisplaceLiquid(simData, simData->simEvents.get(), simData->updatedCells.get(), sim_cell_idx, elemCell);
 
 	simData->updatedCells->elementIdx[sim_cell_idx] = element_idx;
@@ -333,7 +323,7 @@ void AddSolid(int base_sim_cell, uint16_t element_idx, float mass, float tempera
 			if (state == 3) continue;
 				
 			if (gElements[elem].id != simData->voidElementIdx) {
-				if (state == 1) DisplaceGas(   simData, simData->simEvents.get(), simData->updatedCells.get(), cell, elem);
+				if (state == 1) DisplaceGas   (simData, simData->simEvents.get(), simData->updatedCells.get(), cell, elem);
 				if (state == 2) DisplaceLiquid(simData, simData->simEvents.get(), simData->updatedCells.get(), cell, elem);
 
 				simData->updatedCells->elementIdx [cell] = element_idx;
@@ -356,7 +346,7 @@ void AddSolid(int base_sim_cell, uint16_t element_idx, float mass, float tempera
 		uint16_t elem_idx = simData->updatedCells->elementIdx[base_sim_cell];
 		uint8_t  state    = gElements[elem_idx].state & 3;
 		switch (state) {
-		case 1: DisplaceGas(   simData, simData->simEvents.get(), simData->updatedCells.get(), base_sim_cell, elem_idx); break;
+		case 1: DisplaceGas   (simData, simData->simEvents.get(), simData->updatedCells.get(), base_sim_cell, elem_idx); break;
 		case 2: DisplaceLiquid(simData, simData->simEvents.get(), simData->updatedCells.get(), base_sim_cell, elem_idx); break;
 		case 3: if (elem_idx != element_idx) return;
 		}
@@ -470,13 +460,14 @@ void ProcessMassEmission(SimFrameInfo* frame, SimData* simData)
 
 		uint16_t elemCell  = simData->updatedCells->elementIdx[cell];
 		uint16_t elemEmit  = msg.elementIdx;
-		bool     displaced = false;
 
 		if (elemCell != elemEmit && elemCell != simData->vacuumElementIdx) {
 			// Different element, try displace
-			uint8_t state = gElements[elemEmit].state & 3;
-			if (state == 1) DisplaceGas   (simData, simData->simEvents.get(), simData->updatedCells.get(), cell, elemCell);
-			if (state == 2) DisplaceLiquid(simData, simData->simEvents.get(), simData->updatedCells.get(), cell, elemCell);
+			uint8_t state     = gElements[elemEmit].state & 3;
+			bool    displaced = false;
+			if      (state == 1) displaced = DisplaceGas   (simData, simData->simEvents.get(), simData->updatedCells.get(), cell, elemCell);
+			else if (state == 2) displaced = DisplaceLiquid(simData, simData->simEvents.get(), simData->updatedCells.get(), cell, elemCell);
+			// Not emit
 			if (!displaced) {
 				if (msg.callbackIdx == -1)
 					continue;
@@ -492,33 +483,34 @@ void ProcessMassEmission(SimFrameInfo* frame, SimData* simData)
 				simData->simEvents->massEmittedCallbacks.push_back(callBack);
 				continue;
 			}
+		}
 
-			simData->updatedCells->temperature[cell] = CalculateFinalTemperature(
-				simData->updatedCells->mass[cell], simData->updatedCells->temperature[cell], msg.mass, msg.temperature);
-			simData->updatedCells->mass[cell] += msg.mass;
-			if (msg.diseaseIdx != 0xFF)
-				gDisease->AddDiseaseToCell(simData->updatedCells.get(), cell, msg.diseaseIdx, msg.diseaseCount);
-			
-			if (elemCell != msg.elementIdx) {
-				simData->updatedCells->elementIdx[cell] = msg.elementIdx;
-				if (CELL_AVAILABLE(msg.gameCell, simData)) {
-					SubstanceChangeInfo info = { .cellIdx = msg.gameCell, .oldElementIdx = (uint16_t)-1, .newElementIdx = (uint16_t)-1 };
-					simData->simEvents->substanceChangeInfo.push_back(info);
-				}
-				simData->timers[cell].stableCellTicks |= 0x1F;
+		// Do emit
+		simData->updatedCells->temperature[cell] = CalculateFinalTemperature(
+			simData->updatedCells->mass[cell], simData->updatedCells->temperature[cell], msg.mass, msg.temperature);
+		simData->updatedCells->mass[cell] += msg.mass;
+		if (msg.diseaseIdx != 0xFF)
+			gDisease->AddDiseaseToCell(simData->updatedCells.get(), cell, msg.diseaseIdx, msg.diseaseCount);
+
+		if (elemCell != msg.elementIdx) {
+			simData->updatedCells->elementIdx[cell] = msg.elementIdx;
+			if (CELL_AVAILABLE(msg.gameCell, simData)) {
+				SubstanceChangeInfo info = { .cellIdx = msg.gameCell, .oldElementIdx = (uint16_t)-1, .newElementIdx = (uint16_t)-1 };
+				simData->simEvents->substanceChangeInfo.push_back(info);
 			}
-			if (msg.callbackIdx != -1) {
-				MassEmittedCallback callBack = {
-					.callbackIdx  = msg.callbackIdx,
-					.elemIdx      = msg.elementIdx,
-					.emitted      = true,
-					.diseaseIdx   = msg.diseaseIdx,
-					.mass         = msg.mass,
-					.temperature  = msg.temperature,
-					.diseaseCount = msg.diseaseCount
-				};
-				simData->simEvents->massEmittedCallbacks.push_back(callBack);
-			}
+			simData->timers[cell].stableCellTicks |= 0x1F;
+		}
+		if (msg.callbackIdx != -1) {
+			MassEmittedCallback callBack = {
+				.callbackIdx  = msg.callbackIdx,
+				.elemIdx      = msg.elementIdx,
+				.emitted      = true,
+				.diseaseIdx   = msg.diseaseIdx,
+				.mass         = msg.mass,
+				.temperature  = msg.temperature,
+				.diseaseCount = msg.diseaseCount
+			};
+			simData->simEvents->massEmittedCallbacks.push_back(callBack);
 		}
 	}
 	frame->massEmissionMessages.clear();
@@ -1434,13 +1426,531 @@ SimBase::~SimBase()
 #endif
 }
 
+void SimBase::UpdateDataPara(SimData* simData)
+{
+	struct cellVector
+	{
+		std::vector<int> beg;
+		std::vector<int> len;
+		int offset;
+		int count;
+		cellVector(size_t length, int offset) {
+			this->beg.reserve(length);
+			this->len.reserve(length);
+			this->offset = offset;
+			this->count  = 0;
+		}
+	};
+	static int noffset = -1;
+	const static Vector3<float> adjacentOffsets[25] = {
+	{-2, -2, 0.1f }, {-1, -2, 0.15f}, {0, -2, 0.25f}, {1, -2, 0.15f}, {2, -2, 0.1f },
+	{-2, -1, 0.15f}, {-1, -1, 0.5f }, {0, -1, 0.75f}, {1, -1, 0.5f }, {2, -1, 0.15f},
+	{-2,  0, 0.25f}, {-1,  0, 0.75f}, {0,  0, 1    }, {1,  0, 0.75f}, {2,  0, 0.25f},
+	{-2,  1, 0.15f}, {-1,  1, 0.5f }, {0,  1, 0.75f}, {1,  1, 0.5f }, {2,  1, 0.15f},
+	{-2,  2, 0.1f }, {-1,  2, 0.15f}, {0,  2, 0.25f}, {1,  2, 0.15f}, {2,  2, 0.1f } };
+
+	if (!simData->width)
+		return;
+	for (int thrIdx = 0; thrIdx < OPENMP_MAX_THREAD; thrIdx++)
+		simData->randomSeedT[thrIdx] = simData->randomSeed + thrIdx;
+	simData->cells->CopyFrom(simData->updatedCells.get());
+	const std::vector<ActiveRegion> activeRegions = simData->activeRegions; // Keep activeRegions not change
+
+	// Init cells arraies
+	cellVector cellsL2R(  simData->width,                                                    1);
+	cellVector cellsR2L(  simData->width,                                                   -1);
+	cellVector cellsB2T(                   simData->height * activeRegions.size(),  simData->width);
+	cellVector cellsT2B(                   simData->height * activeRegions.size(), -simData->width);
+	cellVector cellsBL2TR(simData->width + simData->height * activeRegions.size(),  simData->width + 1);
+	cellVector cellsBR2TL(simData->width + simData->height * activeRegions.size(),  simData->width - 1);
+
+	// Collect cells arraies
+	for (const ActiveRegion& activeRegion : activeRegions) {
+		const Region& region = activeRegion.region;
+		LOGGER_PRINT2("\t%s: [%d-%d]x[%d-%d]\n", __func__, region.minimum.x, region.maximum.x, region.minimum.y, region.maximum.y);
+
+		for (int yIdx = region.minimum.y; yIdx < region.maximum.y; yIdx++) {
+			int cellL = simData->width * (yIdx + 1) + region.minimum.x + 1;
+			int cellR = simData->width * (yIdx + 1) + region.maximum.x;
+
+			cellsL2R.beg.push_back(cellL);
+			cellsR2L.beg.push_back(cellR);
+			cellsL2R.len.push_back(cellR - cellL);
+			cellsR2L.len.push_back(cellR - cellL);
+			cellsL2R.count++;
+			cellsR2L.count++;
+		}
+
+		for (int xIdx = region.minimum.x; xIdx < region.maximum.x; xIdx++) {
+			int cellB = simData->width * (region.minimum.y + 1) + xIdx + 1;
+			int cellT = simData->width *  region.maximum.y      + xIdx + 1;
+
+			cellsB2T.beg.push_back(cellB);
+			cellsT2B.beg.push_back(cellT);
+			cellsB2T.len.push_back((cellT - cellB) / simData->width);
+			cellsT2B.len.push_back((cellT - cellB) / simData->width);
+			cellsB2T.count++;
+			cellsT2B.count++;
+		}
+
+		int ylen = region.maximum.y - region.minimum.y - 1;
+		for (int xL = region.minimum.x; xL < region.maximum.x; xL++) {
+			int yB = region.minimum.y;
+			int xR = region.minimum.x + region.maximum.x - xL - 1;
+			int step = std::min(region.maximum.x - xL - 1, ylen);
+			if (step <= 0) continue;
+
+			int cellBL = simData->width * (yB + 1) + xL + 1;
+			int cellBR = simData->width * (yB + 1) + xR + 1;
+			int cellTR = cellBL + step * cellsBL2TR.offset;
+			int cellTL = cellBR + step * cellsBR2TL.offset;
+
+			cellsBL2TR.beg.push_back(cellBL);
+			cellsBR2TL.beg.push_back(cellBR);
+			cellsBL2TR.len.push_back(step);
+			cellsBR2TL.len.push_back(step);
+			cellsBL2TR.count++;
+			cellsBR2TL.count++;
+		}
+		int xlen = region.maximum.x - region.minimum.x - 1;
+		for (int yB = region.minimum.y + 1; yB < region.maximum.y; yB++) {
+			int xL = region.minimum.x;
+			int xR = region.maximum.x - 1;
+			int step = std::min(region.maximum.y - yB - 1, xlen);
+			if (step <= 0) continue;
+
+			int cellBL = simData->width * (yB + 1) + xL + 1;
+			int cellBR = simData->width * (yB + 1) + xR + 1;
+			int cellTR = cellBL + step * cellsBL2TR.offset;
+			int cellTL = cellBR + step * cellsBR2TL.offset;
+
+			cellsBL2TR.beg.push_back(cellBL);
+			cellsBR2TL.beg.push_back(cellBR);
+			cellsBL2TR.len.push_back(step);
+			cellsBR2TL.len.push_back(step);
+			cellsBL2TR.count++;
+			cellsBR2TL.count++;
+		}
+	}
+	LOGGER_PRINT2("\t%s: Initalize cell list. horizontal %d; vertical %d; diagonal %d.\n", __func__, cellsL2R.count, cellsB2T.count, cellsBL2TR.count);
+	//for (int i = 0; i < cellsL2R.beg.size(); i++) {
+	//	LOGGER_PRINT2("\tL2R %7d [%3d,%3d]->%3d;R2L %7d [%3d,%3d]->%3d;\n",
+	//		cellsL2R.beg[i], cellsL2R.beg[i] % simData->width, cellsL2R.beg[i] / simData->width, cellsL2R.len[i],
+	//		cellsR2L.beg[i], cellsR2L.beg[i] % simData->width, cellsR2L.beg[i] / simData->width, cellsR2L.len[i]);
+	//}
+	//for (int i = 0; i < cellsB2T.beg.size(); i++) {
+	//	LOGGER_PRINT2("\tB2T %7d [%3d,%3d]->%3d;T2B %7d [%3d,%3d]->%3d;\n",
+	//		cellsB2T.beg[i], cellsB2T.beg[i] % simData->width, cellsB2T.beg[i] / simData->width, cellsB2T.len[i],
+	//		cellsT2B.beg[i], cellsT2B.beg[i] % simData->width, cellsT2B.beg[i] / simData->width, cellsT2B.len[i]);
+	//}
+	//for (int i = 0; i < cellsBL2TR.beg.size(); i++) {
+	//	LOGGER_PRINT2("\tBL2TR %7d [%3d,%3d]->%3d;BR2TL %7d [%3d,%3d]->%3d;\n",
+	//		cellsBL2TR.beg[i], cellsBL2TR.beg[i] % simData->width, cellsBL2TR.beg[i] / simData->width, cellsBL2TR.len[i],
+	//		cellsBR2TL.beg[i], cellsBR2TL.beg[i] % simData->width, cellsBR2TL.beg[i] / simData->width, cellsBR2TL.len[i]);
+	//}
+
+	cellVector* cells4dir[4] = { &cellsL2R, &cellsB2T, &cellsR2L, &cellsT2B };
+	cellVector* cells3dir[3] = { (simData->tickCount % 2) ? &cellsR2L : &cellsL2R,&cellsB2T, (simData->tickCount % 2) ? &cellsBR2TL : &cellsBL2TR };
+
+	omp_set_nested(0);
+	omp_set_num_threads(OPENMP_MAX_THREAD);
+	
+#pragma omp parallel
+	{
+		int thrIdx = omp_get_thread_num();
+		LOGGER_PRINT_PARA("\t%s: Thread randomSeed %u\n", __func__, simData->randomSeedT[thrIdx]);
+
+		for (int dir = 0; dir < 2; dir++) {
+			cellVector* cells = cells4dir[(simData->tickCount + dir) % 4];
+#pragma omp for // --- Update Temperature. Horizontal & Vertical. no sequence.
+			for (int i = 0; i < cells->count; i++) {
+				// LOGGER_PRINT_PARA("\t%s: Update Temperature %7d->%3d x %3d\n", __func__, cells->beg[i], cells->len[i], cells->offset);
+				for (int step = 0; step < cells->len[i]; step++) {
+					int      cellC = cells->beg[i] + cells->offset * step;
+					int      cellN = cellC + cells->offset;
+					uint16_t elemC = simData->cells->elementIdx[cellC];
+					uint16_t elemN = simData->cells->elementIdx[cellN];
+
+					if (fabsf(simData->cells->temperature[cellC] - simData->cells->temperature[cellN]) < 1) continue;
+					if (simData->cells->mass[cellC] < 0.001f) continue;
+					if (simData->cells->mass[cellN] < 0.001f) continue;
+					if (gElementTemperatureData[elemC].thermalConductivity <= 0) continue;
+					if (gElementTemperatureData[elemN].thermalConductivity <= 0) continue;
+					if (gElementTemperatureData[elemC].state & 0x10)             continue;
+					if (gElementTemperatureData[elemN].state & 0x10)             continue;
+
+					UpdateTemperature(simData, cellC, cellN, &this->simEventsT[thrIdx]);
+				}
+			}
+		}
+		
+#pragma omp for // --- Biome Temperature
+		for (int i = 0; i < cellsL2R.count; i++) {
+			// LOGGER_PRINT_PARA("\t%s: Update Biome Temperature %7d->%3d x %3d\n", __func__, cellsL2R.beg[i], cellsL2R.len[i], cellsL2R.offset);
+			for (int cell = cellsL2R.beg[i]; cell <= cellsL2R.beg[i] + cellsL2R.len[i]; cell++) {
+				ElementTemperatureData& data = gElementTemperatureData[simData->cells->elementIdx[cell]];
+
+				// Not TemperatureInsulated
+				if (data.state & 0x10) continue;
+				float biomeTemp = simData->biomeTemperature[cell];
+				if (biomeTemp >= 0) {
+					// biomeTemperatureLerpRate = 0.001
+					simData->updatedCells->temperature[cell] +=
+						(biomeTemp - simData->updatedCells->temperature[cell]) * simData->debugProperties.biomeTemperatureLerpRate;
+				}
+				DoStateTransition(simData, &this->simEventsT[thrIdx], cell, &data);
+			}
+		}
+#pragma omp single // --- Sync
+		{
+			simData->cells->CopyFrom(simData->updatedCells.get());
+			LOGGER_PRINT2("\t%s: Update Temperature Done\n", __func__);
+		}
+
+		for (int dir = 0; dir < 3; dir++) {
+			cellVector* cells = cells3dir[dir];
+#pragma omp for // --- Process Gas Movement (not replace element). Horizontal & Vertical & Diagonal
+			for (int i = 0; i < cells->count; i++) {
+				// LOGGER_PRINT_PARA("\t%s: Process Gas Movement %7d->%3d x %3d\n", __func__, cells->beg[i], cells->len[i], cells->offset);
+				for (int step = 0; step < cells->len[i]; step++) {
+					int      cellC  = cells->beg[i] + cells->offset * step;
+					int      cellN  = cellC + cells->offset;
+					uint16_t elemC  = simData->cells->elementIdx[cellC];
+					uint16_t elemN  = simData->cells->elementIdx[cellN];
+					uint8_t  stateC = gElementPressureData[elemC].state & 3;
+					uint8_t  stateN = gElementPressureData[elemN].state & 3;
+
+					if (simData->cells->properties[cellC] & 1)             continue;
+					if (simData->cells->properties[cellN] & 1)             continue;
+					if (simData->updatedCells->elementIdx[cellC] != elemC) continue;
+					if (simData->updatedCells->elementIdx[cellN] == cellN) continue;
+					if (stateC >  1    || stateN >  1)                     continue;
+					if (stateC == 0    && stateN == 0)                     continue; // Both vacuum
+					if (elemC != elemN && stateN == stateC)                continue; // Different gas
+
+					if (dir == 2) {
+						// Diagonal
+						uint8_t  stateT = gElementPressureData[simData->cells->elementIdx[cellC + simData->width]].state & 3;
+						uint8_t  stateH = gElementPressureData[simData->cells->elementIdx[cellN - simData->width]].state & 3;
+						if (stateT > 1 || stateH > 1) continue;
+					}
+
+					CellInfo cell_info = {
+						.cell          = cellC,
+						.impermeable   = false,
+						.element_index = elemC,
+						.pressure      = &gElementPressureData[elemC],
+						.element_state = stateC
+					};
+
+					float massMove = UpdatePressure(simData, &this->simEventsT[thrIdx], simData->cells.get(), simData->updatedCells.get(),
+						cellC, elemC, stateC, gElementPressureData[elemC].flow, cellN);
+
+					if (dir == 0) {
+						// Horizontal
+						simData->flow[cellC].y += cells->offset * massMove;
+						simData->flow[cellN].x -= cells->offset * massMove;
+					}
+					else if (dir == 1) {
+						// Vertical
+						simData->flow[cellC].z += massMove;
+						simData->flow[cellN].w -= massMove;
+					}
+				}
+			}
+		}
+		
+		for (int dir = 0; dir < 4; dir++) {
+			cellVector* cells = cells4dir[(simData->tickCount + dir) % 4];
+#pragma omp for // --- Process Gas Pressure-based Element Replacement. Horizontal & Vertical. no sequence.
+			for (int i = 0; i < cells->count; i++) {
+				// LOGGER_PRINT_PARA("\t%s: Process Gas Replacement %7d->%3d x %3d\n", __func__, cells->beg[i], cells->len[i], cells->offset);
+				for (int step = 0; step <= cells->len[i] - 2; step++) {
+					int      cellC  = cells->beg[i] + cells->offset * step;
+					int      cellN  = cellC + cells->offset;
+					int      cellNN = cellN + cells->offset;
+					uint16_t elemC = simData->cells->elementIdx[cellC];
+					uint16_t elemN = simData->cells->elementIdx[cellN];
+
+					if (elemN == elemC)								    continue;
+					if ((gElementPressureData[elemC].state & 3) != 1)   continue;
+					if (simData->cells->properties[cellN] & 1)			continue;
+
+					float massMove = DoGasPressureDisplacement(elemC, cellC, cellN, cellNN, simData, &this->simEventsT[thrIdx]);
+
+					if      (cells->offset ==  1)              { simData->flow[cellC].y += massMove; simData->flow[cellN].x -= massMove; }
+					else if (cells->offset == -1)              { simData->flow[cellC].x += massMove; simData->flow[cellN].y -= massMove; }
+					else if (cells->offset ==  simData->width) { simData->flow[cellC].z += massMove; simData->flow[cellN].w -= massMove; }
+					else if (cells->offset == -simData->width) { simData->flow[cellC].w += massMove; simData->flow[cellN].z -= massMove; }
+					else LOGGER_PRINT_PARA("\t%s: Assert Process Gas Movement. Unknow direction %d\n", __func__, cells->offset);
+				}
+			}
+		}
+#pragma omp single // --- Sync
+		{
+			simData->cells->CopyFrom(simData->updatedCells.get());
+			LOGGER_PRINT2("\t%s: Update Gas Done\n", __func__);
+		}
+
+#pragma omp for // --- Process Liquid Movement & Replacement
+		for (int regIdx = 0; regIdx < activeRegions.size(); regIdx++) {
+			const Region& region = activeRegions[regIdx].region;
+			int   offset         = simData->tickCount % 2 ? -1 : 1;
+			int   offsets[3]     = { -offset, offset, simData->width };
+			// LOGGER_PRINT_PARA("\t%s: Process Liquid %d-[%d-%d]x[%d-%d]\n", __func__, regIdx, region.minimum.x, region.maximum.x, region.minimum.y, region.maximum.y);
+
+			// --- Process Liquid Movement (not replace element)
+			// Bad parallelize, bacause UpdateLiquid->UpdateNeighbourLiquidMass->DisplaceGas has 6 directions.
+			for (int yIdx = region.minimum.y; yIdx < region.maximum.y; yIdx++) {
+				int cellL = simData->width * (yIdx + 1) + region.minimum.x + 1;
+				int cellR = simData->width * (yIdx + 1) + region.maximum.x;
+
+				// Traversal all cells
+				int cellC =  simData->tickCount % 2 ? cellR : cellL;
+				int cellE = (simData->tickCount % 2 ? cellL : cellR) + offset;
+				for (; cellC != cellE; cellC += offset) {
+					// Skip not liquid
+					if ((gElementLiquidData[simData->cells->elementIdx[cellC]].state & 3) != 2)
+						continue;
+					// void
+					if (simData->cells->mass[cellC] <= 0)
+						continue;
+
+					UpdateLiquid(simData, &this->simEventsT[thrIdx], cellC);
+				}
+			}
+		
+			// --- Process Liquid Pressure-based Element Replacement
+			// Bad parallelize, bacause DoLiquidPressureDisplacement->DisplaceLiquidDirectional->DisplaceGas has 6 directions.
+			for (int yIdx = region.minimum.y; yIdx < region.maximum.y; yIdx++) {
+				int cellL = simData->width * (yIdx + 1) + region.minimum.x + 1;
+				int cellR = simData->width * (yIdx + 1) + region.maximum.x;
+
+				// Traversal all cells
+				int cellC =  simData->tickCount % 2 ? cellR : cellL;
+				int cellE = (simData->tickCount % 2 ? cellL : cellR) + offset;
+				for (; cellC != cellE; cellC += offset) {
+					int16_t elemC = simData->cells->elementIdx[cellC];
+					if ((gElementPressureData[elemC].state & 3) != 2)
+						continue;
+
+					// Pressure Replace with 3 directions
+					for (int ofs : offsets) {
+						int cellN  = cellC + ofs;
+						int cellNN = cellN + ofs;
+						if (simData->cells->elementIdx[cellN] == elemC) continue;
+						if (cellN == cellE || cellNN == cellE)          continue;
+						if (ofs == simData->width && gElementPostProcessData[elemC].maxMass >= simData->updatedCells->mass[cellC]) continue;
+
+						float massMove = DoLiquidPressureDisplacement(elemC, cellC, cellN, cellNN, simData, &this->simEventsT[thrIdx]);
+						if      (ofs ==  1)              { simData->flow[cellC].y += massMove; simData->flow[cellN].x -= massMove; }
+						else if (ofs == -1)              { simData->flow[cellC].x += massMove; simData->flow[cellN].y -= massMove; }
+						else if (ofs ==  simData->width) { simData->flow[cellC].z += massMove; simData->flow[cellN].w -= massMove; }
+					}
+				}
+			}
+		}
+#pragma omp single // --- Sync
+		{
+			simData->cells->CopyFrom(simData->updatedCells.get());
+			LOGGER_PRINT2("\t%s: Update Liquid Done\n", __func__);
+		}
+
+		for (int dir = 0; dir < 2; dir++) {
+			cellVector* cells = cells4dir[(simData->tickCount + dir) % 4];
+#pragma omp for // --- Update Disease. Horizontal & Vertical. no sequence.
+			for (int i = 0; i < cells->count; i++) {
+				// LOGGER_PRINT_PARA("\t%s: Update Disease %7d->%3d x %3d\n", __func__, cells->beg[i], cells->len[i], cells->offset);
+				for (int step = 0; step < cells->len[i]; step++) {
+					int cellC = cells->beg[i] + cells->offset * step;
+					int cellN = cellC + cells->offset;
+
+					if (simData->cells->diseaseIdx[cellC] != 0xFF || simData->cells->diseaseIdx[cellN] != 0xFF)
+						gDisease->UpdateCells(0.2f, simData, simData->simEvents.get(), cellC, cellN);
+				}
+			}
+		}
+#pragma omp single
+		LOGGER_PRINT2("\t%s: Update Disease Done\n", __func__);
+
+		// --- Update Radiation
+		if (simData->radiationEnabled) {
+			uint8_t DiseaseIndex = gDisease->GetDiseaseIndex(0xD49F77D6);
+			float attenuation_factor = 1 - 1 / simData->RADIATION_LINGER_RATE;
+#pragma omp single
+			simData->cosmicRadiationOcclusion.resize(simData->width* simData->height);
+
+#pragma omp for // --- Cosmic Radiation (Factor). 1 direction, Top to Bottom
+			for (int i = 0; i < cellsT2B.count; i++) {
+				// LOGGER_PRINT_PARA("\t%s: Update Cosmic Radiation %7d->%3d x %3d\n", __func__, cellsT2B.beg[i], cellsT2B.len[i], cellsT2B.offset);
+				for (int step = 0; step < cellsT2B.len[i]; step++) {
+					int cell = cellsT2B.beg[i] + cellsT2B.offset * step;
+					// Factor of up layer. Top layer -> step = 0
+					float inherit = step ? simData->cosmicRadiationOcclusion[cell + simData->width] : 1.0f;
+					// Decay by element of this layer
+					float decay = gElementRadiationData[simData->updatedCells->elementIdx[cell]].factor;
+					if (simData->updatedCells->properties[cell] & 0x80u) // ConstructedTile
+						decay *= simData->RADIATION_CONSTRUCTED_FACTOR;
+					else
+						decay *= simData->updatedCells->mass[cell] / simData->RADIATION_MAX_MASS * simData->RADIATION_DENSITY_WEIGHT + simData->RADIATION_BASE_WEIGHT;
+					inherit *= 1.0f - CLAMP_F(decay, 1, 0);
+					if (inherit < 0.01) inherit = 0;
+					simData->cosmicRadiationOcclusion[cell] = inherit;
+
+					// Inherited from Pervious frame
+					simData->updatedCells->radiation[cell] *= attenuation_factor;
+				}
+			}
+
+#pragma omp for // --- Update Radiation Value
+			for (int regIdx = 0; regIdx < activeRegions.size(); regIdx++) {
+				const Region& region = activeRegions[regIdx].region;
+				// LOGGER_PRINT_PARA("\t%s: Process Radiation %d-[%d-%d]x[%d-%d]\n", __func__, regIdx, region.minimum.x, region.maximum.x, region.minimum.y, region.maximum.y);
+
+				for (int yIdx = region.minimum.y; yIdx < region.maximum.y; yIdx++) {
+					for (int xIdx = region.minimum.x; xIdx < region.maximum.x; xIdx++) {
+						int cell = simData->width * (yIdx + 1) + xIdx + 1;
+
+						// Radiation diffusion to surrounding cells
+						float massFactor = gElementRadiationData[simData->updatedCells->elementIdx[cell]].rads_per_1000;
+						if (massFactor > 0) {
+							for (Vector3<float> offset : adjacentOffsets) {
+								int xIdx2 = xIdx + (int)offset.x;
+								int yIdx2 = yIdx + (int)offset.y;
+								if (xIdx2 < region.minimum.x || xIdx2 >= region.maximum.x) continue;
+								if (yIdx2 < region.minimum.y || yIdx2 >= region.maximum.y) continue;
+
+								int cellA = (simData->width * yIdx2 + 1) + xIdx2 + 1;
+								simData->updatedCells->radiation[cellA] += simData->updatedCells->mass[cell] * 0.001f * massFactor * offset.z;
+							}
+						}
+						// Radioactive Contaminant (Germ)
+						if (simData->updatedCells->diseaseIdx[cell] == DiseaseIndex) {
+							simData->updatedCells->radiation[cell] += simData->updatedCells->diseaseCount[cell] * 0.001f;
+						}
+						// Cosmic Radiation (Value)
+						if (simData->cosmicRadiationOcclusion[cell] > 0) {
+							simData->updatedCells->radiation[cell] += simData->activeRegions[regIdx].currentCosmicRadiationIntensity / simData->RADIATION_LINGER_RATE * simData->cosmicRadiationOcclusion[cell];
+						}
+					}
+				}
+			}
+
+#pragma omp for // --- Update Radiation Clamp
+			for (int i = 0; i < cellsL2R.count; i++) {
+				for (int cell = cellsL2R.beg[i]; cell <= cellsL2R.beg[i] + cellsL2R.len[i]; cell++) {
+					if (simData->updatedCells->radiation[cell] < 0.01)
+						simData->updatedCells->radiation[cell] = 0;
+					else
+						simData->updatedCells->radiation[cell] = MIN_F(simData->updatedCells->radiation[cell], SIM_MAX_RADIATION);
+				}
+			}
+		}
+
+#pragma omp single // --- Update Components Size
+		{
+			LOGGER_PRINT2("\t%s: Update Radiation Done\n", __func__);
+			simData->buildingHeatExchange.temperatureInfo.resize(simData->buildingHeatExchange.handles.items.size());
+			simData->elementChunk        .chunkInfo      .resize(simData->elementChunk        .handles.items.size());
+			simData->elementEmitter      .emittedMassInfo.resize(simData->elementEmitter      .handles.items.size());
+			simData->diseaseEmitter      .emittedInfo    .resize(simData->diseaseEmitter      .handles.items.size());
+		}
+#pragma omp for // --- UpdateComponents
+		for (int regIdx = 0; regIdx < activeRegions.size(); regIdx++) {
+			Region region = activeRegions[regIdx].region;
+			simData->UpdateComponents(0.2f, &region, &this->simEventsT[thrIdx]);
+		}
+//		for (int idx = 0; idx < simData->components.size(); idx++) {
+//#pragma omp single
+//			LOGGER_PRINT2("\t%s: UpdateComponents %d/%lld\n", __func__, idx + 1, simData->components.size());
+//#pragma omp for // --- UpdateComponents
+//			for (int regIdx = 0; regIdx < activeRegions.size(); regIdx++) {
+//				Region region = activeRegions[regIdx].region;
+//				simData->components[idx]->Update(0.2f, simData, &region, &this->simEventsT[thrIdx]);
+//			}
+//		}
+#pragma omp single
+		LOGGER_PRINT2("\t%s: UpdateComponents Done\n", __func__);
+
+		if (simData->worldZones.get()) {
+#pragma omp for // --- Space Biome Exposure
+			for (int i = 0; i < cellsL2R.count; i++) {
+				// LOGGER_PRINT_PARA("\t%s: Update Biome Exposure %7d->%3d x %3d\n", __func__, cellsL2R.beg[i], cellsL2R.len[i], cellsL2R.offset);
+				for (int cell = cellsL2R.beg[i]; cell <= cellsL2R.beg[i] + cellsL2R.len[i]; cell++) {
+					// Not space, skip
+					if (simData->worldZones[cell] != 0xFF)
+						continue;
+					float lossRate = 0;
+					switch (gElementPostProcessData[simData->updatedCells->elementIdx[cell]].state & 3) {
+						case 1: lossRate = 1   ; break;
+						case 2: lossRate = 1000; break;
+						case 3: continue;
+					}
+					simData->updatedCells->mass[cell] = MAX_F(simData->updatedCells->mass[cell] - lossRate * 0.02f, 0);
+					simData->flow[cell].x = -0.2f;
+					simData->flow[cell].y =  0.2f;
+					simData->flow[cell].z =  0.2f;
+					simData->flow[cell].w = -0.2f;
+				}
+			}
+		}
+#pragma omp single
+		LOGGER_PRINT2("\t%s: Space Biome Exposure Done\n", __func__);
+
+#pragma omp for // --- PostProcessCell
+		for (int regIdx = 0; regIdx < activeRegions.size(); regIdx++) {
+			const Region& region = activeRegions[regIdx].region;
+			// LOGGER_PRINT_PARA("\t%s: PostProcessCell %d-[%d-%d]x[%d-%d]\n", __func__, regIdx, region.minimum.x, region.maximum.x, region.minimum.y, region.maximum.y);
+
+			for (int yIdx = region.minimum.y; yIdx < region.maximum.y; yIdx++) {
+				for (int xIdx = region.minimum.x; xIdx < region.maximum.x; xIdx++) {
+					int cell = simData->width * (yIdx + 1) + xIdx + 1;
+					PostProcessCell(simData, &this->simEventsT[thrIdx], cell);
+				}
+			}
+		}
+#pragma omp single
+		LOGGER_PRINT2("\t%s: PostProcessCell Done\n", __func__);
+
+#pragma omp for // --- PostProcess Disease
+		for (int i = 0; i < cellsL2R.count; i++) {
+			// LOGGER_PRINT_PARA("\t%s: PostProcess Disease %7d->%3d x %3d\n", __func__, cellsL2R.beg[i], cellsL2R.len[i], cellsL2R.offset);
+			for (int cell = cellsL2R.beg[i]; cell <= cellsL2R.beg[i] + cellsL2R.len[i]; cell++) {
+				//No disease, skip
+				if (simData->updatedCells->diseaseIdx[cell] == 0xFF)
+					continue;
+				gDisease->PostProcessOneCell(simData, cell);
+			}
+		}
+#pragma omp single
+		LOGGER_PRINT_PARA("\t%s: PostProcess Disease Done\n", __func__);
+	}
+
+	// --- Collect data
+	for (int thrIdx = 0; thrIdx < OPENMP_MAX_THREAD; thrIdx++)
+		simData->randomSeed += simData->randomSeedT[thrIdx];
+	this->ConsolidateEvents(simData);
+	LOGGER_PRINT2("\t%s: Collect simEvents done, randomSeed\n", __func__, simData->randomSeed);
+
+	++simData->tickCount;
+	LOGGER_PRINT2("%s done, tick %d\n", __func__, simData->tickCount);
+}
+
 void SimBase::UpdateData(SimData* simData)
 {
+	static int noffset = -1;
+	const static Vector3<float> adjacentOffsets[25] = {
+	{-2, -2, 0.1f }, {-1, -2, 0.15f}, {0, -2, 0.25f}, {1, -2, 0.15f}, {2, -2, 0.1f },
+	{-2, -1, 0.15f}, {-1, -1, 0.5f }, {0, -1, 0.75f}, {1, -1, 0.5f }, {2, -1, 0.15f},
+	{-2,  0, 0.25f}, {-1,  0, 0.75f}, {0,  0, 1    }, {1,  0, 0.75f}, {2,  0, 0.25f},
+	{-2,  1, 0.15f}, {-1,  1, 0.5f }, {0,  1, 0.75f}, {1,  1, 0.5f }, {2,  1, 0.15f},
+	{-2,  2, 0.1f }, {-1,  2, 0.15f}, {0,  2, 0.25f}, {1,  2, 0.15f}, {2,  2, 0.1f } };
+
 	LOGGER_PRINT2("%s, seed %d\n", __func__, simData->randomSeed);
 	if (!simData->width)
 		return;
 	noffset      = -noffset;
-	gGasDisplace = 1.01 + RAND_FLOAT_01(simData->randomSeed) * 0.99; // New_add. Make gas displacement stable.
+	gGasDisplace = 1.01f + (float)RAND_FLOAT_01(simData->randomSeed) * 0.99f; // New_add. Make gas displacement stable.
 	simData->cells->CopyFrom(simData->updatedCells.get());
 
 	for (const ActiveRegion& activeRegion: simData->activeRegions) {
@@ -1466,7 +1976,7 @@ void SimBase::UpdateData(SimData* simData)
 						&& !(gElementTemperatureData[elem].state & 0x10)
 						&& !(gElementTemperatureData[elemR].state & 0x10))
 					{
-						UpdateTemperature(simData, simData->simEvents.get(), cell, cellR);
+						UpdateTemperature(simData, cell, cellR);
 					}
 					if (locY < region.maximum.y - 1
 						&& fabsf(simData->cells->temperature[cell] - simData->cells->temperature[cellT]) >= 1
@@ -1476,7 +1986,7 @@ void SimBase::UpdateData(SimData* simData)
 						&& !(gElementTemperatureData[elem].state & 0x10)
 						&& !(gElementTemperatureData[elemT].state & 0x10))
 					{
-						UpdateTemperature(simData, simData->simEvents.get(), cell, cellT);
+						UpdateTemperature(simData, cell, cellT);
 					}
 				}
 				// Not TemperatureInsulated
@@ -1631,8 +2141,11 @@ void SimBase::UpdateData(SimData* simData)
 					if ((gElementPressureData[nelem].state & 3) != 1)	continue;
 
 					float massMove = DoGasPressureDisplacement(elem_idx, cell, ncell, nncell, simData);
-					simData->flow[cell ].w -= massMove;
-					simData->flow[ncell].z += massMove;
+					if      (offset ==  1)              { simData->flow[cell].y += massMove; simData->flow[ncell].x -= massMove; }
+					else if (offset == -1)              { simData->flow[cell].x += massMove; simData->flow[ncell].y -= massMove; }
+					else if (offset ==  simData->width) { simData->flow[cell].z += massMove; simData->flow[ncell].w -= massMove; }
+					else if (offset == -simData->width) { simData->flow[cell].w += massMove; simData->flow[ncell].z -= massMove; }
+					else ASSERT_TEXT("Process Gas Movement. Unknow direction.\n");
 				}
 			}
 		}
@@ -1860,7 +2373,6 @@ void SimBase::UpdateData(SimData* simData)
 
 		gDisease->PostProcess(simData, simData->simEvents.get(), x_start, x_end, y_start, y_end);
 		LOGGER_PRINT2("\t%s: PostProcess Done\n", __func__);
-
 	}
 	++simData->tickCount;
 	LOGGER_PRINT2("%s done, tick %d\n", __func__, simData->tickCount);
@@ -1874,12 +2386,18 @@ void SimBase::InitializeUpdateTasks()
 		this->simEvents.push_back(new SimEvents());
 	}
 }
+#endif
 
 void SimBase::ConsolidateEvents(SimData* simData)
 {
 #define VECTOR_MOVE(_src, _dest) for(const auto& _value : _src) {_dest.push_back(_value);} _src.clear()
 
+#ifdef __PARALLEL__
+	for (int thrIdx = 0; thrIdx < OPENMP_MAX_THREAD; thrIdx++) {
+		SimEvents* p_simEvent = &this->simEventsT[thrIdx];
+#else
 	for (SimEvents* p_simEvent : this->simEvents) {
+#endif
 		VECTOR_MOVE(p_simEvent->substanceChangeInfo,			simData->simEvents->substanceChangeInfo);
 		VECTOR_MOVE(p_simEvent->spawnOreInfo,					simData->simEvents->spawnOreInfo);
 		VECTOR_MOVE(p_simEvent->spawnLiquidInfo,				simData->simEvents->spawnLiquidInfo);
@@ -1900,7 +2418,6 @@ void SimBase::ConsolidateEvents(SimData* simData)
 		p_simEvent->digInfo.clear();
 	}
 }
-#endif
 
 void SimBase::CopyUpdatedCellsToCells(SimData* simData)
 {
@@ -1909,6 +2426,7 @@ void SimBase::CopyUpdatedCellsToCells(SimData* simData)
 
 void SimBase::CopySimDataToGame(SimData* simData, GameData* new_game_data, const GameData* old_game_data, int num_frames_processed)
 {
+	static int tick_count = 0;
 	LOGGER_PRINT2("%s. Processed frame:%d\n", __func__, num_frames_processed);
 
 #ifdef __THREAD_DECOUPLE__
@@ -1999,7 +2517,7 @@ void SimBase::CopySimDataToGame(SimData* simData, GameData* new_game_data, const
 	new_game_data->elementChunkInfo.resize(simData->elementChunk.chunkInfo.size());
 	new_game_data->elementChunkInfo.assign(simData->elementChunk.chunkInfo.begin(), simData->elementChunk.chunkInfo.end());
 	for (int i = 0; i < simData->elementChunk.chunkInfo.size(); i++) {
-		simData->elementChunk.chunkInfo[i].deltaKJ = 0.0;
+		simData->elementChunk.chunkInfo[i].deltaKJ = 0;
 	}
 
 	std::swap(simData->elementConsumer.consumedMassInfo, new_game_data->consumedMassInfo);
@@ -2009,7 +2527,7 @@ void SimBase::CopySimDataToGame(SimData* simData, GameData* new_game_data, const
 	new_game_data->emittedMassInfo.assign(simData->elementEmitter.emittedMassInfo.begin(), simData->elementEmitter.emittedMassInfo.end());
 	for (int i = 0; i < simData->elementEmitter.emittedMassInfo.size(); i++) {
 		simData->elementEmitter.emittedMassInfo[i].elemIdx = simData->vacuumElementIdx;
-		simData->elementEmitter.emittedMassInfo[i].mass = 0;
+		simData->elementEmitter.emittedMassInfo[i].mass    = 0;
 	}
 
 	new_game_data->buildingTemperatureInfo.resize(simData->buildingHeatExchange.temperatureInfo.size());
@@ -2219,13 +2737,11 @@ void FrameSync::GameSync_CleanUp()
 
 void FrameSync::GameSync_PrepareGameData(BinaryBufferReader* reader)
 {
-	LOGGER_PRINT("%s init\n", __func__);
+	LOGGER_PRINT("%s init. mSimReadyToSwap: %c\n", __func__, this->mSimReadyToSwap ? 'T' : 'F');
 	mtx_lock(&this->mMutex);
 
-	LOGGER_PRINT("%s 1 %s\n", __func__, this->mSimReadyToSwap ? "T" : "F");
 	while (!this->mSimReadyToSwap)
 		cnd_wait(&this->mGameCond, &this->mMutex);
-	LOGGER_PRINT("%s 2\n", __func__);
 
 	GameSyncFunction(reader, gSim->frameSync->mGameData.get());
 
@@ -2279,7 +2795,7 @@ void SimUpdateTemperatureTask::InternalDoTask()
 					&& !(gElementTemperatureData[elem].state & 0x10)
 					&& !(gElementTemperatureData[elemR].state & 0x10))
 				{
-					UpdateTemperature(simData, simEvents, cell, cellR);
+					UpdateTemperature(simData, cell, cellR, simEvents);
 				}
 				if (locY < this->end.y - 1
 					&& fabsf(simData->cells->temperature[cell] - simData->cells->temperature[cellT]) >= 1
@@ -2289,7 +2805,7 @@ void SimUpdateTemperatureTask::InternalDoTask()
 					&& !(gElementTemperatureData[elem].state & 0x10)
 					&& !(gElementTemperatureData[elemT].state & 0x10))
 				{
-					UpdateTemperature(simData, simEvents, cell, cellT);
+					UpdateTemperature(simData, cell, cellT, simEvents);
 				}
 			}
 			// Not TemperatureInsulated

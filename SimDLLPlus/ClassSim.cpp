@@ -57,6 +57,9 @@ SimData::SimData(int sim_width, int sim_height, bool radiation_enabled, bool hea
     this->vacuumElementIdx      = GetElementIndex(0x2D39BF75);
     this->unobtaniumElementIdx  = GetElementIndex(0x6D95058C);
     this->randomSeed            = (uint32_t)_time64(0);
+    for (int thrIdx = 0; thrIdx < OPENMP_MAX_THREAD; thrIdx++) {
+        this->randomSeedT[thrIdx] = this->randomSeed + thrIdx;
+    }
 
     for (int cell = 0; cell < cellCount; cell++) {
         this->timers[cell].stableCellTicks |= 0x1F;
@@ -162,7 +165,12 @@ uint8_t SimData::GetStableTicksRemaining(uint64_t sim_cell)
 {
     uint8_t result = this->timers[sim_cell].stableCellTicks & 0x1F;
     if (result == 31) {
+#ifdef __PARALLEL__
+        int thrIdx = omp_get_thread_num();
+        this->timers[sim_cell].stableCellTicks = RAND_INT(this->randomSeedT[thrIdx], 3, 6) & 0x1F;
+#else
         this->timers[sim_cell].stableCellTicks = RAND_INT(this->randomSeed, 3, 6) & 0x1F;
+#endif
     }
     else if (result) {
         this->timers[sim_cell].stableCellTicks = --result & 0x1F;
@@ -231,15 +239,14 @@ void SimData::SettleThermalBoundaries(CellSOA* src_cells, CellSOA* dest_cells)
     }
 }
 
-void SimData::UpdateComponents(float dt, Region* region)
+void SimData::UpdateComponents(float dt, Region* region, SimEvents* simEvents)
 {
-    LOGGER_PRINT2("%s-%llu\n", __func__, this->components.size());
     if (this->components.size() <= 0) return;
 
+    if (simEvents == NULL) simEvents = this->simEvents.get();
     for (SimComponent* component : this->components) {
-        component->Update(dt, this, region);
+        component->Update(dt, this, region, this->simEvents.get());
     }
-    LOGGER_PRINT2("%s done\n", __func__);
 }
 
 void SimData::UpdateComponentsDataListOnly()

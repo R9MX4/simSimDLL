@@ -55,9 +55,11 @@ GameDataUpdate* PrepareGameDataUpdate(const GameData* gameData)
 	ASSIGN_GAMEDATA(numDiseaseConsumedInfos				, diseaseConsumedInfos				, diseaseConsumedInfo			);
 	ASSIGN_GAMEDATA(numRadiationConsumedCallbacks		, radiationConsumedCallbacks		, radiationConsumedCallbacks	);
 
+#ifdef __DEBUG_PRINT__
 	for (LiquidChangeInfo info : gameData->liquidChangeInfo)
 		if (info.cellIdx < 0 || info.cellIdx >= gSimData->numGameCells)
 			ASSERT_TEXT("LiquidChangeInfo cell index over range");
+#endif
 
 	gGameDataUpdate.accumulatedFlow                  = gameData->accumulatedFlow.get();
 	gGameDataUpdate.propertyTextureFlow              = gameData->propertyTextureFlow.get();
@@ -525,6 +527,7 @@ void SIM_Shutdown() {
 
 	CleanUp();
 	SymCleanup(GetCurrentProcess());
+	LOGGER_PRINT("%s done\n", __func__);
 }
 
 int64_t SIM_HandleMessage(Hashes::SimMessageHashes sim_msg_id, int msg_length, char* msg)
@@ -651,7 +654,11 @@ void Sim::Main()
 				this->elapsedSeconds = min(0, Frame - frameCnt * 0.2f);
 				while (frameCnt) {
 					LOGGER_PRINT2("--Sim %s UpdateData, frame: %d\n", __func__, frameCnt);
+#ifdef __PARALLEL__
+					this->UpdateDataPara(gSimData.get());
+#else
 					this->UpdateData(gSimData.get());
+#endif
 					frameCnt--;
 				}
 			}

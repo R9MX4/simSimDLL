@@ -3,6 +3,7 @@
 #define CLASS_CELL_H
 
 #include "global.h"
+
 //----- define class -----
 class CellSOA
 {

@@ -134,6 +134,8 @@ void ConduitTemperatureManager::Set(int handle, float contents_temperature, floa
 
 ConduitTemperatureUpdateData* ConduitTemperatureManager::Update(float dt, BuildingTemperatureInfo* building_temperature_info)
 {
+	LOGGER_PRINT("ConduitTemperatureManager::%s\n", __func__);
+
 	mtx_lock(&this->dataMutex);
 
 	this->meltedContentHandles.clear();
@@ -172,7 +174,7 @@ ConduitTemperatureUpdateData* ConduitTemperatureManager::Update(float dt, Buildi
 				heatTrans = -heatTrans;
 
 			float tempFinCT = CLAMP_F(conduitData.temperature - heatTrans / conduitData.heatCapacity       , SIM_MAX_TEMPERATURE, 0);
-			float tempFinPi = CLAMP_F(temperaturePipe             + heatTrans / conduitData.conduitHeatCapacity, SIM_MAX_TEMPERATURE, 0);
+			float tempFinPi = CLAMP_F(temperaturePipe         + heatTrans / conduitData.conduitHeatCapacity, SIM_MAX_TEMPERATURE, 0);
 			if ((tempFinCT - tempFinPi) * (conduitData.temperature - temperaturePipe) < 0) {
 				tempFinCT = (conduitData.heatCapacity * conduitData.temperature + conduitData.conduitHeatCapacity * temperaturePipe) / (conduitData.heatCapacity + conduitData.conduitHeatCapacity);
 			}
@@ -264,7 +266,6 @@ void ConduitTemperatureManager_Remove(int handle)
 
 void* ConduitTemperatureManager_Update(float dt, BuildingTemperatureInfo* building_temperatures)
 {
-	LOGGER_PRINT("%s. gConduitTemperatureManager: %lld\n", __func__, (uint64_t)gConduitTemperatureManager.get());
 	return (void*)gConduitTemperatureManager->Update(dt, building_temperatures);
 }
 

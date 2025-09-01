@@ -3,6 +3,7 @@
 #define GLOBAL_H
 
 #include "pch.h"
+
 //----- declar struct -----
 struct GameDataUpdate;
 
@@ -324,11 +325,14 @@ extern bool  DisplaceGas   (SimData* simData, SimEvents* simEvents, CellSOA* cel
 extern bool  DisplaceLiquid(SimData* simData, SimEvents* simEvents, CellSOA* cells, int cell_idx, uint16_t elem_idx);
 extern bool  DoStateTransition(SimData* simData, SimEvents* simEvents, int cell, const ElementTemperatureData* elem);
 extern void  Evaporate(int cell_idx, SimData* simData, SimEvents* simEvents);
-extern float DoGasPressureDisplacement(uint16_t elem_idx, const int cell, const int ncell, const int nncell, SimData* simData);
-extern float DoLiquidPressureDisplacement(uint16_t elem_idx, const int cell, const int ncell, int nncell, SimData* simData);
+extern float DoGasPressureDisplacement(uint16_t elem_idx, const int cell, const int ncell, const int nncell, SimData* simData, SimEvents* simEvents = NULL);
+//extern float DoGasPressureDisplacement(uint16_t elem_idx, const int cell, const int ncell, const int nncell, SimData* simData);
+extern float DoLiquidPressureDisplacement(uint16_t elem_idx, const int cell, const int ncell, const int nncell, SimData* simData, SimEvents* simEvents = NULL);
+//extern float DoLiquidPressureDisplacement(uint16_t elem_idx, const int cell, const int ncell, int nncell, SimData* simData);
 extern void  PostProcessCell(SimData* simData, SimEvents* simEvents, int cell_idx);
 extern float UpdatePressure(SimData* simData, SimEvents* simEvents, CellSOA* cells, CellSOA* updated_cells,
 	int cell, uint16_t elem_idx, uint8_t elem_state, float elem_flow, int ncell);
 extern void  UpdateLiquid(SimData* simData, SimEvents* simEvents, int cell_idx);
-extern void  UpdateTemperature(SimData* simData, SimEvents* simEvents, const int cell, const int ncell);
+extern void  UpdateTemperature(SimData* simData, const int cell, const int ncell, SimEvents* simEvents = NULL);
+//extern void  UpdateTemperature(SimData* simData, SimEvents* simEvents, const int cell, const int ncell);
 #endif

@@ -285,6 +285,75 @@ void Disease::PostProcess(SimData* simData, SimEvents* simEvents, int x_start, c
     }
 }
 
+// New Add for Parallelization
+void Disease::PostProcessOneCell(SimData* simData, int cell)
+{
+    //Influence by temperature
+    DiseaseInfo* info = &this->diseases[simData->updatedCells->diseaseIdx[cell]];
+    int level = getTempLevel(simData->updatedCells->temperature[cell], &info->temperatureRange);
+    int lev_H = std::min(level, 3);
+    int lev_L = std::max(level - 1, 0);
+
+    //Calculate change_Rate by temperature
+    float changeRate_Temp = 0;
+    float halfLife_L = getTempValue(lev_L, &info->temperatureHalfLives);
+    float halfLife_H = getTempValue(lev_H, &info->temperatureHalfLives);
+    if (level == 2 || halfLife_L == INFINITY || halfLife_H == INFINITY) {
+        changeRate_Temp = 1;
+    }
+    else {
+        float temp_Ratio = 0;
+        float temp_L = getTempValue(lev_L, &info->temperatureRange);
+        float temp_H = getTempValue(lev_H, &info->temperatureRange);
+        if (temp_H > temp_L)
+            temp_Ratio = (simData->updatedCells->temperature[cell] - temp_L) / (temp_H - temp_L);
+
+        changeRate_Temp = halfLife_L + temp_Ratio * (halfLife_H - halfLife_L);
+        if (changeRate_Temp == INFINITY) changeRate_Temp = 1;
+        else                             changeRate_Temp = powf(2.0f, -0.2f / changeRate_Temp);
+    }
+
+    int diseaseCount = simData->updatedCells->diseaseCount[cell];
+    //Calculate change count by disease population
+    float changeCount_Popu = 0;
+    DiseaseInfo::ElemGrowthInfo* elem_info = &info->elemGrowthInfo;
+    uint16_t elem_idx = simData->updatedCells->elementIdx[cell];
+    if (diseaseCount >= simData->updatedCells->mass[cell] * elem_info->minCountPerKG[elem_idx]) {
+        //Judge crowded
+        float halfLife_Popu = elem_info->populationHalfLife[elem_idx];
+        if (diseaseCount > simData->updatedCells->mass[cell] * elem_info->maxCountPerKG[elem_idx])
+            halfLife_Popu = elem_info->overPopulationHalfLife[elem_idx];
+
+        float changeRate_Popu = 0;
+        if      (halfLife_Popu == 0.0)      changeRate_Popu = 0.0;
+        else if (halfLife_Popu == INFINITY) changeRate_Popu = 1;
+        else                                changeRate_Popu = powf(2.0f, -0.2f / halfLife_Popu);
+
+        changeCount_Popu = (changeRate_Popu - 1.0f) * diseaseCount;
+    }
+    else {
+        changeCount_Popu = elem_info->underPopulationDeathRate[elem_idx] * -0.2f;
+    }
+
+    //Apply count change
+    float changeCount = diseaseCount * changeRate_Temp + simData->updatedCells->diseaseGrowthAccumulatedError[cell] - diseaseCount + changeCount_Popu;
+    //Apply count change by Radiation
+    if (simData->radiationEnabled)
+        changeCount -= (simData->updatedCells->radiation[cell] * info->radiationKillRate);
+    //Record Integer Round-off error
+    simData->updatedCells->diseaseGrowthAccumulatedError[cell] = changeCount - (float)(int)changeCount;
+    simData->updatedCells->diseaseCount                 [cell] += (int)changeCount;
+
+    if (simData->updatedCells->diseaseCount[cell] < 0) {
+        simData->updatedCells->diseaseIdx                   [cell] = -1;
+        simData->updatedCells->diseaseCount                 [cell] = 0;
+        simData->updatedCells->diseaseInfestationTickCount  [cell] = 0;
+        simData->updatedCells->diseaseGrowthAccumulatedError[cell] = 0;
+    }
+    if (simData->updatedCells->diseaseInfestationTickCount[cell] < 0xFD)
+        simData->updatedCells->diseaseInfestationTickCount[cell]++;
+}
+
 void Disease::UpdateCells(float dt, SimData* simData, SimEvents* simEvents, int cell, int ncell)
 {
     if (((gElementPostProcessData[simData->cells->elementIdx[cell]].state ^ gElementPostProcessData[simData->cells->elementIdx[ncell]].state) & 3) != 0)

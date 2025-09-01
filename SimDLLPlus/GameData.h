@@ -4,6 +4,7 @@
 
 #include "global.h"
 #include "ClassSim.h"
+
 //----- define struct -----
 struct SolidInfo
 {

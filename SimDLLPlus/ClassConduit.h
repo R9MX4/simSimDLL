@@ -50,5 +50,4 @@ public:
 
 //----- define Variable -----
 extern std::unique_ptr<ConduitTemperatureManager> gConduitTemperatureManager;
-
 #endif

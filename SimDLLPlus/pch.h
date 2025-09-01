@@ -4,11 +4,13 @@
 
 #define __DEBUGED__
 #define __DEBUG_PRINT__
-//#undef __DEBUG_PRINT__
 #define __SIMDLL_PLUS__
-//#undef __SIMDLL_PLUS__
 #define __THREAD_DECOUPLE__
+#define __PARALLEL__
+#undef __DEBUG_PRINT__
+//#undef __SIMDLL_PLUS__
 //#undef __THREAD_DECOUPLE__
+//#undef __PARALLEL__
 
 #include <vector>
 #include <string>
@@ -16,36 +18,46 @@
 #include <unordered_map>
 #include <algorithm>
 #include <memory>
+#include <omp.h>
+
+//----- global define -----
+#define SIM_MAX_TEMPERATURE 10000.0f
+#define SIM_MAX_RADIATION   9000000.0f
+#define SIM_MIN_RADIATION   0.0f
+#define OPENMP_MAX_THREAD   4
 
 //----- typedef -----
 typedef int Handle;
-//----- global const -----
-const float SIM_MAX_TEMPERATURE = 10000.0f;
-const float SIM_MAX_RADIATION   = 9000000.0f;
-const float SIM_MIN_RADIATION   = 0.0f;
-//----- global variable -----
-extern FILE*  gLogger;
-extern FILE*  gLogger2;
-extern int    gLogLevel;
-extern double gGasDisplace;
 
-extern void PRINT_TIME(FILE* _Logger);
+//----- global variable -----
+extern FILE* gLogger;
+extern FILE* gLogger2;
+extern int   gLogLevel;
+extern float gGasDisplace;
+
 extern void INIT_TIMER();
+extern void PRINT_TIME(FILE* _Logger);
+extern void PRINT_LOG(FILE* _Logger, const char* fmt, ...);
+extern void PRINT_LOG_PARA(FILE* _Logger, const char* fmt, ...);
 extern float MAX_F(float a, float b);
 extern float MIN_F(float a, float b);
 extern float CLAMP_F(float val, float max, float min);
 //----- pre define -----
 #ifdef __DEBUG_PRINT__
-#define LOGGER_INIT()       fopen_s(&gLogger,  "simlog.txt", "w+");
-#define LOGGER_INIT2()      fopen_s(&gLogger2, "simlogPara.txt", "w+");
-#define LOGGER_PRINT(...)  (PRINT_TIME(gLogger ), fprintf(gLogger , __VA_ARGS__), std::fflush(gLogger ))
-#define LOGGER_PRINT2(...) (PRINT_TIME(gLogger2), fprintf(gLogger2, __VA_ARGS__), std::fflush(gLogger2))
-#define LOGGER_LEVEL(_LEVEL, ...)  if(gLogLevel >= _LEVEL) LOGGER_PRINT2(__VA_ARGS__);
+#define LOGGER_INIT()              if(!gLogger)  fopen_s(&gLogger,  "simlog.txt", "w+");
+#define LOGGER_INIT2()             if(!gLogger2) fopen_s(&gLogger2, "simlogPara.txt", "w+");
+//#define LOGGER_PRINT(...)  (PRINT_TIME(gLogger ), fprintf(gLogger , __VA_ARGS__), std::fflush(gLogger ))
+//#define LOGGER_PRINT2(...) (PRINT_TIME(gLogger2), fprintf(gLogger2, __VA_ARGS__), std::fflush(gLogger2))
+#define LOGGER_PRINT(...)          PRINT_LOG(gLogger , __VA_ARGS__)
+#define LOGGER_PRINT2(...)         PRINT_LOG(gLogger2, __VA_ARGS__)
+#define LOGGER_PRINT_PARA(...)     PRINT_LOG_PARA(gLogger2, __VA_ARGS__)
+#define LOGGER_LEVEL(_LEVEL, ...)  if(gLogLevel >= _LEVEL) LOGGER_PRINT_PARA(__VA_ARGS__);
 #else
 #define LOGGER_INIT()              {;}
 #define LOGGER_INIT2()             {;}
 #define LOGGER_PRINT(...)          (0)
 #define LOGGER_PRINT2(...)         (0)
+#define LOGGER_PRINT_PARA(...)     (0)
 #define LOGGER_LEVEL(_LEVEL, ...)  {;}
 #endif
 
